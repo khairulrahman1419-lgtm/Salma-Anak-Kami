@@ -1,0 +1,6 @@
+{
+  "name": "TumbuhKembang - Jurnal Ayah",
+  "description": "Aplikasi pencatat tumbuh kembang dan timeline momen berharga anak bagi seorang ayah, dengan dokumentasi foto/video, kurva pertumbuhan, dan pencadangan Google Drive.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
