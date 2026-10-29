@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="brandGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="55%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+    <linearGradient id="sparkleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE68A" />
+      <stop offset="100%" stop-color="#F59E0B" />
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#brandGrad)" />
+  <path
+    d="M256 396c-6.5 0-13-2.3-18.2-6.8C167.4 328.4 112 276.6 112 208.5 112 159.4 150.4 120 198.5 120c27.8 0 54.4 13.4 70.5 35.6h-26c16.1-22.2 42.7-35.6 70.5-35.6 48.1 0 86.5 39.4 86.5 88.5 0 68.1-55.4 119.9-125.8 180.7-5.2 4.5-11.7 6.8-18.2 6.8z"
+    fill="#FFFFFF"
+  />
+  <path
+    d="M366 96l10.5 27.5L404 134l-27.5 10.5L366 172l-10.5-27.5L328 134l27.5-10.5L366 96z"
+    fill="url(#sparkleGrad)"
+  />
+  <circle cx="256" cy="226" r="26" fill="#10B981" opacity="0.22" />
+</svg>
