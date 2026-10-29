@@ -2,27 +2,33 @@ import React, { useEffect } from 'react';
 import {
   X,
   Calendar,
-  Scale,
-  Ruler,
-  Brain,
   CheckCircle2,
   ExternalLink,
-  Share2,
   Video,
   Download,
+  Edit2,
   ChevronLeft,
   ChevronRight,
-  Heart,
   Sparkles,
 } from 'lucide-react';
 import type { MomentItem } from '../types/index.ts';
-import { calculateAge, CATEGORY_LABELS, formatDateIndo, formatHeight, formatWeight, formatHeadCirc } from '../utils/growth.ts';
+import {
+  calculateAge,
+  CATEGORY_LABELS,
+  formatDateIndo,
+  formatHeight,
+  formatWeight,
+  formatHeadCirc,
+} from '../utils/growth.ts';
+import { downloadMediaFile } from '../utils/downloadMedia.ts';
 
 interface MomentLightboxProps {
   moment: MomentItem | null;
   birthDate: string;
   childName: string;
   onClose: () => void;
+  onEditMoment?: (moment: MomentItem) => void;
+  onNotify?: (msg: string) => void;
   onPrev?: () => void;
   onNext?: () => void;
 }
@@ -32,6 +38,8 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
   birthDate,
   childName,
   onClose,
+  onEditMoment,
+  onNotify,
   onPrev,
   onNext,
 }) => {
@@ -50,21 +58,24 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
   const age = calculateAge(birthDate, moment.date);
   const categoryMeta = CATEGORY_LABELS[moment.category] || CATEGORY_LABELS.lainnya;
 
+  const handleDownload = async () => {
+    const ok = await downloadMediaFile(moment.mediaUrl, moment.title, moment.mediaType);
+    if (ok && onNotify) {
+      onNotify(`File "${moment.title}" berhasil diunduh ke perangkat Anda!`);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
       <div className="relative w-full max-w-4xl bg-[#FFFDF9] rounded-3xl border border-[#EDE8DF] shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[92vh]">
         {/* Media Preview Column */}
         <div className="md:w-3/5 bg-slate-950 flex items-center justify-center relative min-h-[280px] md:min-h-[460px] overflow-hidden select-none">
           {moment.mediaType === 'video' ? (
-            <div className="p-8 text-center text-white space-y-3">
-              <div className="w-16 h-16 rounded-full bg-white/10 mx-auto flex items-center justify-center text-sky-400">
-                <Video className="w-8 h-8" />
-              </div>
-              <p className="text-sm font-semibold">Video Momen Tumbuh Kembang</p>
-              <p className="text-xs text-slate-400 max-w-xs mx-auto">
-                File video tersimpan dengan aman di Google Drive Cloud Storage.
-              </p>
-            </div>
+            <video
+              src={moment.mediaUrl}
+              controls
+              className="w-full h-full max-h-[70vh] object-contain"
+            />
           ) : (
             <img
               src={moment.mediaUrl}
@@ -74,9 +85,21 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
             />
           )}
 
+          {/* Quick Download Badge on Media Top-Left */}
+          <button
+            type="button"
+            onClick={handleDownload}
+            title="Unduh foto / video ini"
+            className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-black/60 hover:bg-black/80 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-xs transition-colors cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-300" />
+            <span>Unduh</span>
+          </button>
+
           {/* Previous / Next Floating Arrows for Album Browsing */}
           {onPrev && (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onPrev();
@@ -90,6 +113,7 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
 
           {onNext && (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onNext();
@@ -103,6 +127,7 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
 
           {/* Close button for mobile inside media area */}
           <button
+            type="button"
             onClick={onClose}
             aria-label="Tutup Detail"
             className="md:hidden absolute top-3 right-3 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center backdrop-blur-xs cursor-pointer"
@@ -122,6 +147,7 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
               </span>
 
               <button
+                type="button"
                 onClick={onClose}
                 aria-label="Tutup Detail"
                 className="hidden md:flex w-8 h-8 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 items-center justify-center transition-colors cursor-pointer"
@@ -142,16 +168,14 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
                   <span>{formatDateIndo(moment.date)}</span>
                 </div>
                 <span aria-hidden="true">·</span>
-                <span className="font-semibold text-emerald-800">
-                  Usia {age.label}
-                </span>
+                <span className="font-semibold text-emerald-800">Usia {age.label}</span>
               </div>
             </div>
 
-            {/* Father's Heartfelt Notes & Story */}
+            {/* Parents' Heartfelt Notes & Story */}
             <div className="bg-[#FAF8F5] p-4 rounded-2xl border border-[#EDE8DF] space-y-1.5">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                Catatan Hati & Kisah Ayah
+                Catatan Hati &amp; Kisah Momen
               </span>
               <p className="text-xs sm:text-sm text-slate-700 leading-relaxed italic font-serif">
                 "{moment.notes}"
@@ -198,7 +222,9 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                 <div className="text-[11px]">
-                  <span className="font-semibold text-slate-800 block">Tersimpan di Google Drive</span>
+                  <span className="font-semibold text-slate-800 block">
+                    {moment.googleDriveSynced ? 'Tersimpan di Google Drive' : 'Tersimpan di Perangkat'}
+                  </span>
                   <span className="text-slate-500">Folder: Jurnal Tumbuh Kembang - {childName}</span>
                 </div>
               </div>
@@ -214,18 +240,42 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
                 </a>
               ) : (
                 <span className="text-[10px] font-semibold text-sky-700 bg-sky-100/70 px-2 py-0.5 rounded-md">
-                  Tersinkron
+                  Aman
                 </span>
               )}
             </div>
           </div>
 
-          {/* Action Footer */}
-          <div className="pt-3 border-t border-[#EDE8DF] flex items-center justify-between">
-            <span className="text-[11px] text-slate-400">
-              Dokumentasi Jurnal Buah Hati
-            </span>
+          {/* Action Footer: Edit, Download & Tutup */}
+          <div className="pt-3 border-t border-[#EDE8DF] flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Unduh Foto</span>
+              </button>
+
+              {onEditMoment && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = moment;
+                    onClose();
+                    onEditMoment(target);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition-colors cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>Edit Momen</span>
+                </button>
+              )}
+            </div>
+
             <button
+              type="button"
               onClick={onClose}
               className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
             >

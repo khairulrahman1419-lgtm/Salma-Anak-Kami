@@ -6,13 +6,18 @@ export interface ChildProfile {
   nickname: string;
   birthDate: string; // YYYY-MM-DD
   gender: Gender;
+  bloodType?: string;
   avatarUrl: string;
   fatherName: string;
+  fatherInfo?: string;
   fatherAvatarUrl?: string;
   motherName?: string;
+  motherInfo?: string;
+  motherAvatarUrl?: string;
   birthWeightKg: number;
   birthHeightCm: number;
   birthHeadCircumferenceCm?: number;
+  specialNotes?: string;
 }
 
 export type MomentCategory =

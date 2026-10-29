@@ -11,16 +11,21 @@ import {
   Loader2,
   Cloud,
   HardDrive,
+  Download,
+  Edit2,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import type { MomentCategory, MomentItem } from '../types/index.ts';
 import { uploadMediaToGoogleDrive } from '../services/googleDriveClient.ts';
 import { simulateGoogleDriveUpload } from '../utils/googleDriveService.ts';
+import { downloadMediaFile } from '../utils/downloadMedia.ts';
 
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSaveMoment: (moment: MomentItem) => void;
+  onUpdateMoment?: (moment: MomentItem) => void;
+  editingMoment?: MomentItem | null;
   childName: string;
   initialMode?: 'media' | 'milestone';
   storageDestination: 'google_drive' | 'vps_local';
@@ -50,11 +55,6 @@ const PRESET_SAMPLE_MEDIA = [
   },
 ];
 
-/**
- * Mengonversi dan mengompresi file gambar menjadi Data URL (Base64 JPEG)
- * agar aman disimpan ke localStorage tanpa melebihi batas kuota browser
- * dan tetap tampil meskipun halaman dimuat ulang.
- */
 function compressImageToDataUrl(file: File, maxDimension = 1080, quality = 0.8): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -99,6 +99,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   isOpen,
   onClose,
   onSaveMoment,
+  onUpdateMoment,
+  editingMoment,
   childName,
   initialMode = 'media',
   storageDestination,
@@ -109,6 +111,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const [showStoragePicker, setShowStoragePicker] = useState(false);
+
+  const isEditMode = Boolean(editingMoment);
 
   // Form States
   const [title, setTitle] = useState('');
@@ -133,13 +137,40 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
 
-  // Sinkronisasi kategori awal ketika modal dibuka
+  // Sinkronisasi state ketika modal dibuka (mode tambah baru vs mode edit)
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+    setErrorMessage(null);
+    setProgressStatus(null);
+    setSelectedFile(null);
+    setShowStoragePicker(false);
+
+    if (editingMoment) {
+      setTitle(editingMoment.title);
+      setDate(editingMoment.date);
+      setCategory(editingMoment.category);
+      setMediaType(editingMoment.mediaType);
+      setMediaPreview(editingMoment.mediaUrl);
+      setWeightKg(editingMoment.weightKg !== undefined ? String(editingMoment.weightKg) : '');
+      setHeightCm(editingMoment.heightCm !== undefined ? String(editingMoment.heightCm) : '');
+      setHeadCircumferenceCm(
+        editingMoment.headCircumferenceCm !== undefined
+          ? String(editingMoment.headCircumferenceCm)
+          : ''
+      );
+      setNotes(editingMoment.notes);
+    } else {
+      setTitle('');
+      setDate(new Date().toISOString().slice(0, 10));
       setCategory(initialMode === 'milestone' ? 'milestone_fisik' : 'bermain');
-      setErrorMessage(null);
+      setMediaType('image');
+      setMediaPreview(null);
+      setWeightKg('');
+      setHeightCm('');
+      setHeadCircumferenceCm('');
+      setNotes('');
     }
-  }, [isOpen, initialMode]);
+  }, [isOpen, initialMode, editingMoment]);
 
   if (!isOpen) return null;
 
@@ -165,7 +196,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     onClose();
   };
 
-  // Handle Drag & Drop
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -191,7 +221,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     if (e.target.files && e.target.files[0]) {
       void handleFileSelected(e.target.files[0]);
     }
-    // Reset input value agar file yang sama dapat dipilih ulang bila perlu
     e.target.value = '';
   };
 
@@ -239,10 +268,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   };
 
-  /**
-   * Submit Handler: Mencegah reload halaman dengan e.preventDefault(),
-   * mengunggah ke Google Drive (jika dipilih & terotorisasi) atau menyimpan lokal.
-   */
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -265,15 +290,38 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     try {
       setIsSubmitting(true);
 
-      let driveFileId: string | undefined = undefined;
-      let driveWebViewLink: string | undefined = undefined;
-      let isSyncedToDrive = false;
+      // Jika sedang mengedit momen yang sudah ada dan user tidak memilih file baru, langsung simpan perubahan dengan cepat
+      if (editingMoment && !selectedFile && finalMediaUrl === editingMoment.mediaUrl) {
+        const updatedItem: MomentItem = {
+          ...editingMoment,
+          title: title.trim(),
+          date,
+          mediaType,
+          mediaUrl: finalMediaUrl,
+          category,
+          notes: notes.trim(),
+          weightKg: weightKg ? parseFloat(weightKg) : undefined,
+          heightCm: heightCm ? parseFloat(heightCm) : undefined,
+          headCircumferenceCm: headCircumferenceCm ? parseFloat(headCircumferenceCm) : undefined,
+        };
 
-      // 1. Jika mode Google Drive dan sudah terhubung dengan token nyata
+        if (onUpdateMoment) {
+          onUpdateMoment(updatedItem);
+        } else {
+          onSaveMoment(updatedItem);
+        }
+        resetForm();
+        onClose();
+        return;
+      }
+
+      let driveFileId: string | undefined = editingMoment?.googleDriveFileId;
+      let driveWebViewLink: string | undefined = editingMoment?.googleDriveWebViewLink;
+      let isSyncedToDrive = editingMoment?.googleDriveSynced || false;
+
       if (storageDestination === 'google_drive' && accessToken) {
         setProgressStatus('Menghubungkan ke folder Google Drive Anda...');
 
-        // Ambil binary Blob dari selected file atau preset image
         let mediaBlob: Blob;
         if (selectedFile) {
           mediaBlob = selectedFile;
@@ -302,8 +350,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         driveFileId = driveResult.fileId;
         driveWebViewLink = driveResult.webViewLink;
         isSyncedToDrive = true;
-      } else if (storageDestination === 'google_drive') {
-        // Jika pilih Google Drive tapi belum login Google, jalankan simulasi terhubung
+      } else if (storageDestination === 'google_drive' && !editingMoment) {
         setProgressStatus('Menyimpan cadangan ke Google Drive (simulasi)...');
         const simRes = await simulateGoogleDriveUpload({
           file: selectedFile,
@@ -323,8 +370,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         isSyncedToDrive = true;
       }
 
-      const newMoment: MomentItem = {
-        id: `moment_${Date.now()}`,
+      const savedMoment: MomentItem = {
+        id: editingMoment ? editingMoment.id : `moment_${Date.now()}`,
         title: title.trim(),
         date,
         mediaType,
@@ -337,15 +384,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         googleDriveSynced: isSyncedToDrive,
         googleDriveFileId: driveFileId,
         googleDriveWebViewLink: driveWebViewLink,
-        createdAt: new Date().toISOString(),
+        createdAt: editingMoment ? editingMoment.createdAt : new Date().toISOString(),
       };
 
-      onSaveMoment(newMoment);
+      if (editingMoment && onUpdateMoment) {
+        onUpdateMoment(savedMoment);
+      } else {
+        onSaveMoment(savedMoment);
+      }
+
       resetForm();
       onClose();
     } catch (err: any) {
       console.error('Upload Error:', err);
-      setErrorMessage(err.message || 'Terjadi kendala saat mengunggah. Silakan coba kembali.');
+      setErrorMessage(err.message || 'Terjadi kendala saat menyimpan. Silakan coba kembali.');
     } finally {
       setIsSubmitting(false);
       setProgressStatus(null);
@@ -359,14 +411,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         <div className="px-6 py-4 border-b border-[#EDE8DF] flex items-center justify-between bg-[#FAF8F5]">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
-              <Sparkles className="w-4 h-4" />
+              {isEditMode ? <Edit2 className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                Catat Momen & Milestone Baru
+                {isEditMode ? 'Edit Momen, Foto & Catatan' : 'Catat Momen & Milestone Baru'}
               </h2>
               <p className="text-[11px] text-slate-500 -mt-0.5">
-                Dokumentasikan foto, video, dan data fisik untuk {childName}
+                {isEditMode
+                  ? `Perbarui foto, catatan, atau unduh kembali file momen ${childName}`
+                  : `Dokumentasikan foto, video, dan data fisik untuk ${childName}`}
               </p>
             </div>
           </div>
@@ -457,15 +511,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
 
-          {/* Pilihan Sumber Media: Kamera Langsung, Galeri HP, atau Storage */}
+          {/* Pilihan Sumber Media */}
           <div className="space-y-2">
             <label className="block text-xs font-bold text-slate-800">
-              Pilih Sumber Foto / Video
+              {isEditMode ? 'Foto / Video Saat Ini (Bisa Diganti atau Diunduh)' : 'Pilih Sumber Foto / Video'}
             </label>
 
-            {/* 3 Tombol Sumber Utama (Sesuai Kebutuhan Mobile) */}
             <div className="grid grid-cols-3 gap-2">
-              {/* 1. Kamera HP Langsung */}
               <button
                 type="button"
                 onClick={() => cameraInputRef.current?.click()}
@@ -478,7 +530,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <span className="text-[9px] text-emerald-700">Jepret Langsung</span>
               </button>
 
-              {/* 2. Galeri Foto HP */}
               <button
                 type="button"
                 onClick={() => galleryInputRef.current?.click()}
@@ -491,7 +542,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <span className="text-[9px] text-sky-700">Pilih dari Album</span>
               </button>
 
-              {/* 3. Storage Aplikasi / Drive */}
               <button
                 type="button"
                 onClick={() => setShowStoragePicker((prev) => !prev)}
@@ -509,8 +559,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </button>
             </div>
 
-            {/* Hidden Native File Inputs */}
-            {/* Input 1: Kamera HP Langsung (capture="environment") */}
             <input
               ref={cameraInputRef}
               type="file"
@@ -519,7 +567,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               onChange={handleFileChange}
               className="hidden"
             />
-            {/* Input 2: Galeri HP & Penyimpanan Lokal (Standard file picker) */}
             <input
               ref={galleryInputRef}
               type="file"
@@ -528,13 +575,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               className="hidden"
             />
 
-            {/* Pilihan Storage / Galeri Aplikasi jika dipilih */}
             {showStoragePicker && (
               <div className="p-3 bg-amber-50/70 rounded-2xl border border-amber-200 space-y-2 animate-in fade-in duration-150">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
                     <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    Pilih Foto dari Storage Aplikasi & Contoh Album:
+                    Pilih Foto dari Storage Aplikasi &amp; Contoh Album:
                   </span>
                   <button
                     type="button"
@@ -569,7 +615,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </div>
             )}
 
-            {/* Area Drag and Drop / Preview Media */}
+            {/* Area Drag and Drop / Preview Media + Tombol Unduh */}
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -584,32 +630,55 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               }`}
             >
               {mediaPreview ? (
-                <div className="flex flex-col sm:flex-row items-center gap-3">
-                  <div className="w-24 h-20 rounded-xl overflow-hidden bg-slate-100 shrink-0 border border-slate-200 shadow-xs">
-                    {mediaType === 'video' ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-white text-xs">
-                        <Video className="w-5 h-5 mb-1 text-sky-400" />
-                        <span className="text-[10px]">Video Terpilih</span>
-                      </div>
-                    ) : (
-                      <img
-                        src={mediaPreview}
-                        alt="Preview"
-                        className="w-full h-full object-cover"
-                      />
-                    )}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row items-center gap-3">
+                    <div className="w-24 h-20 rounded-xl overflow-hidden bg-slate-100 shrink-0 border border-slate-200 shadow-xs">
+                      {mediaType === 'video' ? (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-white text-xs">
+                          <Video className="w-5 h-5 mb-1 text-sky-400" />
+                          <span className="text-[10px]">Video Terpilih</span>
+                        </div>
+                      ) : (
+                        <img
+                          src={mediaPreview}
+                          alt="Preview"
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                    </div>
+                    <div className="text-center sm:text-left space-y-0.5">
+                      <p className="text-xs font-bold text-slate-800">
+                        {selectedFile
+                          ? selectedFile.name
+                          : isEditMode
+                          ? 'File Foto / Video Tersimpan'
+                          : 'Media Siap Disimpan'}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        Ketuk tombol Kamera atau Galeri di atas jika ingin mengganti file
+                      </p>
+                      <span className="inline-block text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
+                        ✓ Media Tersedia
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-left space-y-0.5">
-                    <p className="text-xs font-bold text-slate-800">
-                      {selectedFile ? selectedFile.name : 'Media Siap Disimpan'}
-                    </p>
-                    <p className="text-[11px] text-slate-500">
-                      Ketuk tombol Kamera atau Galeri di atas untuk mengganti foto
-                    </p>
-                    <span className="inline-block text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
-                      ✓ Foto Siap Disimpan
-                    </span>
-                  </div>
+
+                  {/* Tombol Download File Langsung dari Modal */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void downloadMediaFile(
+                        mediaPreview,
+                        title || `momen-${childName}`,
+                        mediaType
+                      );
+                    }}
+                    className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 text-xs font-bold shadow-2xs transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Unduh File</span>
+                  </button>
                 </div>
               ) : (
                 <div className="py-2 space-y-1">
@@ -670,10 +739,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               className="w-full px-3 py-2 text-xs bg-[#FAF8F5] border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 cursor-pointer"
             >
               <option value="milestone_fisik">Milestone Fisik (Duduk, Merangkak, Berjalan)</option>
-              <option value="kata_pertama">Kata & Bahasa (Bicara, Panggil Papa/Mama)</option>
-              <option value="momen_lucu">Momen Lucu & Menggemaskan</option>
-              <option value="bermain">Aktivitas Bermain & Sensorik</option>
-              <option value="makan_mpasi">MPASI & Nutrisi Baru</option>
+              <option value="kata_pertama">Kata &amp; Bahasa (Bicara, Panggil Papa/Mama)</option>
+              <option value="momen_lucu">Momen Lucu &amp; Menggemaskan</option>
+              <option value="bermain">Aktivitas Bermain &amp; Sensorik</option>
+              <option value="makan_mpasi">MPASI &amp; Nutrisi Baru</option>
               <option value="kesehatan">Pemeriksaan Dokter / Posyandu</option>
               <option value="ulang_tahun">Ulang Tahun / Syukuran</option>
               <option value="lainnya">Momen Spesial Lainnya</option>
@@ -744,19 +813,18 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* Catatan Milestone / Kisah Momen */}
           <div className="space-y-1">
             <label className="block text-xs font-bold text-slate-800">
-              Catatan Milestone & Kisah Momen <span className="text-rose-500">*</span>
+              Catatan Milestone &amp; Kisah Momen <span className="text-rose-500">*</span>
             </label>
             <textarea
               required
               rows={3}
-              placeholder="Ceritakan apa yang si kecil lakukan, reaksi lucunya, kata yang diucapkannya, atau perasaan Ayah saat melihat momen ini..."
+              placeholder="Ceritakan apa yang si kecil lakukan, reaksi lucunya, kata yang diucapkannya, atau perasaan Ayah & Ibu saat melihat momen ini..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full px-3 py-2 text-xs bg-[#FAF8F5] border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 resize-none"
             />
           </div>
 
-          {/* Progress Status Notice */}
           {progressStatus && (
             <div className="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 flex items-center gap-2.5 text-xs font-semibold text-sky-900">
               <Loader2 className="w-4 h-4 animate-spin text-sky-600 shrink-0" />
@@ -796,7 +864,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   <>
                     <UploadCloud className="w-4 h-4 text-emerald-200" />
                     <span>
-                      {storageDestination === 'google_drive'
+                      {isEditMode
+                        ? 'Simpan Perubahan'
+                        : storageDestination === 'google_drive'
                         ? 'Simpan ke Google Drive'
                         : 'Simpan ke Penyimpanan'}
                     </span>

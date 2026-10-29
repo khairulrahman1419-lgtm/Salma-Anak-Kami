@@ -17,27 +17,26 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   onOpenUpload,
   currentUser,
-  onConnectGoogle,
   onOpenMenu,
 }) => {
   return (
-    <header className="sticky top-0 z-30 bg-[#FAF8F5]/90 backdrop-blur-md border-b border-[#E7E2D9]">
+    <header className="sticky top-0 z-30 bg-[#FAF8F5]/92 backdrop-blur-md border-b border-[#E7E2D9]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between gap-4 h-16">
+        <div className="flex items-center justify-between gap-3 h-14 sm:h-16">
           {/* Zone 1: Brand Wordmark */}
           <div
             onClick={() => onSelectTab('overview')}
             className="flex items-center gap-2.5 shrink-0 cursor-pointer"
           >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#34D399] to-[#60A5FA] flex items-center justify-center text-white shadow-sm shadow-emerald-600/10">
-              <Heart className="w-5 h-5 fill-white" />
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-[#34D399] to-[#14B8A6] flex items-center justify-center text-white shadow-sm shadow-emerald-600/10">
+              <Heart className="w-4.5 h-4.5 fill-white" />
             </div>
             <div className="flex flex-col">
-              <span className="text-base font-bold tracking-tight text-slate-800 whitespace-nowrap">
+              <span className="text-sm sm:text-base font-extrabold tracking-tight text-slate-800 whitespace-nowrap">
                 TumbuhKembang
               </span>
-              <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap -mt-0.5">
-                Jurnal Ayah & Buah Hati
+              <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 whitespace-nowrap -mt-0.5">
+                Jurnal Ayah &amp; Ibu
               </span>
             </div>
           </div>
@@ -45,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Zone 2: Navigation Links for Desktop */}
           <nav className="hidden md:flex items-center gap-1">
             <button
+              type="button"
               onClick={() => onSelectTab('overview')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
                 activeTab === 'overview'
@@ -55,6 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
               Beranda
             </button>
             <button
+              type="button"
               onClick={() => onSelectTab('gallery')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
                 activeTab === 'gallery'
@@ -62,9 +63,10 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
               }`}
             >
-              Kolase Galeri (Pinterest)
+              Kolase
             </button>
             <button
+              type="button"
               onClick={() => onSelectTab('charts')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
                 activeTab === 'charts'
@@ -72,9 +74,10 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
               }`}
             >
-              Kurva Tumbuh (WHO)
+              Kurva WHO
             </button>
             <button
+              type="button"
               onClick={() => onSelectTab('milestones')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
                 activeTab === 'milestones'
@@ -82,12 +85,12 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
               }`}
             >
-              Buku Milestone
+              Milestone
             </button>
           </nav>
 
           {/* Zone 3: Actions + Menu Button */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
             {currentUser && (
               <div
                 title={`Google Drive Terhubung: ${currentUser.email}`}
@@ -100,20 +103,22 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
 
-            <PWAInstallButton variant="header" />
+            <div className="hidden sm:block">
+              <PWAInstallButton variant="header" />
+            </div>
 
             <button
               type="button"
               onClick={() => onOpenUpload('media')}
-              className="flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-bold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition-all shadow-sm active:scale-[0.98] whitespace-nowrap cursor-pointer"
+              className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 text-xs font-bold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition-all shadow-sm active:scale-[0.98] whitespace-nowrap cursor-pointer"
             >
               <Camera className="w-3.5 h-3.5 text-emerald-300" />
               <span>+ Upload</span>
             </button>
 
-            {/* Quick Menu Pop-up Trigger (Disembunyikan untuk kesederhanaan, keluar via tombol pop-up ini) */}
             {onOpenMenu && (
               <button
+                type="button"
                 onClick={onOpenMenu}
                 title="Buka Menu & Pengaturan"
                 aria-label="Menu Fitur"
@@ -124,42 +129,6 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
         </div>
-      </div>
-
-      {/* Mobile Top Sub-nav Bar */}
-      <div className="md:hidden border-t border-[#E7E2D9] px-2 py-1 flex items-center justify-around bg-[#FAF8F5]">
-        <button
-          onClick={() => onSelectTab('overview')}
-          className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap ${
-            activeTab === 'overview' ? 'text-slate-900 font-bold bg-white shadow-xs' : 'text-slate-600'
-          }`}
-        >
-          Beranda
-        </button>
-        <button
-          onClick={() => onSelectTab('gallery')}
-          className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap ${
-            activeTab === 'gallery' ? 'text-slate-900 font-bold bg-white shadow-xs' : 'text-slate-600'
-          }`}
-        >
-          Kolase
-        </button>
-        <button
-          onClick={() => onSelectTab('charts')}
-          className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap ${
-            activeTab === 'charts' ? 'text-slate-900 font-bold bg-white shadow-xs' : 'text-slate-600'
-          }`}
-        >
-          Kurva WHO
-        </button>
-        <button
-          onClick={() => onSelectTab('milestones')}
-          className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap ${
-            activeTab === 'milestones' ? 'text-slate-900 font-bold bg-white shadow-xs' : 'text-slate-600'
-          }`}
-        >
-          Milestone
-        </button>
       </div>
     </header>
   );

@@ -6,12 +6,18 @@ export const initialChildProfile: ChildProfile = {
   nickname: 'Kalandra',
   birthDate: '2025-06-15',
   gender: 'male',
+  bloodType: 'O+',
   avatarUrl: '/src/assets/images/child_avatar_1792502522791.jpg',
   fatherName: 'Ayah Dimas',
+  fatherInfo: 'Pendamping tumbuh kembang & teman bermain',
+  fatherAvatarUrl: '/src/assets/images/moment_father_play_1792555577232.jpg',
   motherName: 'Bunda Sarah',
+  motherInfo: 'ASI eksklusif & nutrisi MPASI rumahan',
+  motherAvatarUrl: '/src/assets/images/moment_eating_puree_1792555107552.jpg',
   birthWeightKg: 3.2,
   birthHeightCm: 49.0,
   birthHeadCircumferenceCm: 34.0,
+  specialNotes: 'Buah hati tercinta Ayah Dimas & Bunda Sarah. ASI eksklusif dilanjutkan MPASI bernutrisi seimbang.',
 };
 
 export const initialMoments: MomentItem[] = [

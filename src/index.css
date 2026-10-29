@@ -3,10 +3,41 @@
 @layer base {
   body {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background-color: #FAF8F5;
+    background-color: #F4F9F8;
+    background-image: radial-gradient(#CBE5DF 1px, transparent 1px), radial-gradient(#DCEEEB 1px, #F4F9F8 1px);
+    background-size: 36px 36px;
+    background-position: 0 0, 18px 18px;
     color: #1F2937;
     -webkit-font-smoothing: antialiased;
   }
+}
+
+@keyframes marquee-scroll {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee-quote {
+  display: flex;
+  width: max-content;
+  animation: marquee-scroll 28s linear infinite;
+}
+
+.animate-marquee-quote:hover,
+.animate-marquee-quote:active {
+  animation-play-state: paused;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Custom scrollbar for horizontal filters and gallery */

@@ -1,41 +1,52 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * TumbuhKembang - Jurnal Ayah & Buah Hati
  * Aplikasi Dokumentasi Tumbuh Kembang, Galeri Kolase Pinterest & Kurva WHO
  */
 
 import React, { useState, useEffect } from 'react';
 import {
-  Heart,
-  Camera,
-  Sparkles,
-  BookOpen,
   TrendingUp,
   Cloud,
   CheckCircle2,
   Download,
-  Upload,
-  Calendar,
-  AlertCircle,
   Home,
-  Images,
   Award,
   Layers,
-  Settings,
+  Edit2,
+  Plus,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
-import type { ChildProfile, FilterOptions, GrowthRecord, MilestoneChecklistItem, MomentItem } from './types/index.ts';
-import { initialChildProfile, initialGrowthRecords, initialMilestones, initialMoments } from './data/initialData.ts';
-import { filterMoments, getLatestMeasurements, calculateAge } from './utils/growth.ts';
-import { exportAppBackup, loadFromStorage, saveToStorage, STORAGE_KEYS } from './utils/googleDriveService.ts';
+import type {
+  ChildProfile,
+  GrowthRecord,
+  MilestoneChecklistItem,
+  MomentItem,
+} from './types/index.ts';
+import {
+  initialChildProfile,
+  initialGrowthRecords,
+  initialMilestones,
+  initialMoments,
+} from './data/initialData.ts';
+import { getLatestMeasurements, calculateAge } from './utils/growth.ts';
+import {
+  exportAppBackup,
+  loadFromStorage,
+  saveToStorage,
+  STORAGE_KEYS,
+} from './utils/googleDriveService.ts';
+import { downloadMediaFile } from './utils/downloadMedia.ts';
 
 import { initAuth, googleSignIn, logoutGoogle } from './services/googleAuth.ts';
 import { fetchDriveQuota } from './services/googleDriveClient.ts';
 
 import { Header } from './components/Header.tsx';
+import { ParentingQuoteBar } from './components/ParentingQuoteBar.tsx';
 import { ChildHeroProfile } from './components/ChildHeroProfile.tsx';
+import { Clothespin } from './components/Clothespin.tsx';
 import { StorageModal } from './components/StorageModal.tsx';
 import { ContextMenuPopup } from './components/ContextMenuPopup.tsx';
 import { CollageGallery } from './components/CollageGallery.tsx';
@@ -46,12 +57,17 @@ import { MomentLightbox } from './components/MomentLightbox.tsx';
 import { EditProfileModal } from './components/EditProfileModal.tsx';
 import { QuickGrowthModal } from './components/QuickGrowthModal.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
+import { FloatingDoctorFAQ } from './components/FloatingDoctorFAQ.tsx';
 
 export default function App() {
   // App States with persistent LocalStorage
-  const [profile, setProfile] = useState<ChildProfile>(() =>
-    loadFromStorage(STORAGE_KEYS.PROFILE, initialChildProfile)
-  );
+  const [profile, setProfile] = useState<ChildProfile>(() => {
+    const saved = loadFromStorage(STORAGE_KEYS.PROFILE, initialChildProfile);
+    return {
+      ...initialChildProfile,
+      ...saved,
+    };
+  });
 
   const [moments, setMoments] = useState<MomentItem[]>(() =>
     loadFromStorage(STORAGE_KEYS.MOMENTS, initialMoments)
@@ -66,24 +82,29 @@ export default function App() {
   );
 
   // Storage Destination & Google Drive OAuth states
-  const [storageDestination, setStorageDestination] = useState<'google_drive' | 'vps_local'>('google_drive');
+  const [storageDestination, setStorageDestination] = useState<'google_drive' | 'vps_local'>(
+    'google_drive'
+  );
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [driveQuota, setDriveQuota] = useState<{ usageGb: string; limitGb: string } | null>(null);
 
-  // Modals
+  // Modals & Editing States
   const [isStorageModalOpen, setIsStorageModalOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [editingMoment, setEditingMoment] = useState<MomentItem | null>(null);
   const [isQuickGrowthOpen, setIsQuickGrowthOpen] = useState(false);
   const [uploadMode, setUploadMode] = useState<'media' | 'milestone'>('media');
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [selectedMoment, setSelectedMoment] = useState<MomentItem | null>(null);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'overview' | 'gallery' | 'charts' | 'milestones'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'gallery' | 'charts' | 'milestones'>(
+    'overview'
+  );
 
   // Notification Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -165,10 +186,24 @@ export default function App() {
     showToast('Akun Google berhasil diputuskan.');
   };
 
-  // Upload Handlers
+  // Upload & Edit Handlers
   const handleOpenUpload = (mode: 'media' | 'milestone' = 'media') => {
+    setEditingMoment(null);
     setUploadMode(mode);
     setIsUploadOpen(true);
+  };
+
+  const handleOpenEditMoment = (moment: MomentItem) => {
+    setEditingMoment(moment);
+    setUploadMode('media');
+    setIsUploadOpen(true);
+  };
+
+  const handleDownloadMoment = async (moment: MomentItem) => {
+    const ok = await downloadMediaFile(moment.mediaUrl, moment.title, moment.mediaType);
+    if (ok) {
+      showToast(`File "${moment.title}" berhasil diunduh!`);
+    }
   };
 
   const handleSaveNewMoment = (newMoment: MomentItem) => {
@@ -208,6 +243,62 @@ export default function App() {
     } else {
       showToast(`Momen "${newMoment.title}" berhasil disimpan di penyimpanan lokal.`);
     }
+  };
+
+  const handleUpdateMoment = (updatedMoment: MomentItem) => {
+    setMoments((prevMoments) => {
+      const next = prevMoments.map((m) => (m.id === updatedMoment.id ? updatedMoment : m));
+      saveToStorage(STORAGE_KEYS.MOMENTS, next);
+      return next;
+    });
+
+    if (updatedMoment.weightKg || updatedMoment.heightCm) {
+      const birth = new Date(profile.birthDate);
+      const mDate = new Date(updatedMoment.date);
+      const monthsDiff = Math.max(
+        0,
+        (mDate.getFullYear() - birth.getFullYear()) * 12 + (mDate.getMonth() - birth.getMonth())
+      );
+
+      setRecords((prev) => {
+        const existingIdx = prev.findIndex((r) => r.sourceMomentId === updatedMoment.id);
+        let updatedRecords: GrowthRecord[];
+        if (existingIdx >= 0) {
+          updatedRecords = prev.map((r, i) =>
+            i === existingIdx
+              ? {
+                  ...r,
+                  date: updatedMoment.date,
+                  ageMonths: monthsDiff,
+                  weightKg: updatedMoment.weightKg || r.weightKg,
+                  heightCm: updatedMoment.heightCm || r.heightCm,
+                  headCircumferenceCm: updatedMoment.headCircumferenceCm ?? r.headCircumferenceCm,
+                  notes: updatedMoment.title,
+                }
+              : r
+          );
+        } else {
+          updatedRecords = [
+            ...prev,
+            {
+              id: `gr_${Date.now()}`,
+              date: updatedMoment.date,
+              ageMonths: monthsDiff,
+              weightKg: updatedMoment.weightKg || latestStats.weightKg,
+              heightCm: updatedMoment.heightCm || latestStats.heightCm,
+              headCircumferenceCm: updatedMoment.headCircumferenceCm,
+              notes: updatedMoment.title,
+              sourceMomentId: updatedMoment.id,
+            },
+          ];
+        }
+        saveToStorage(STORAGE_KEYS.GROWTH_RECORDS, updatedRecords);
+        return updatedRecords;
+      });
+    }
+
+    setEditingMoment(null);
+    showToast(`Perubahan momen "${updatedMoment.title}" berhasil disimpan!`);
   };
 
   const handleToggleMilestone = (milestoneId: string) => {
@@ -260,18 +351,21 @@ export default function App() {
       saveToStorage(STORAGE_KEYS.GROWTH_RECORDS, updatedRecords);
       return updatedRecords;
     });
-    showToast(`Data pertumbuhan ${profile.nickname} (${data.weightKg ? data.weightKg + ' kg' : ''} ${data.heightCm ? data.heightCm + ' cm' : ''}) berhasil dicatat!`);
+    showToast(
+      `Data pertumbuhan ${profile.nickname} (${data.weightKg ? data.weightKg + ' kg' : ''} ${
+        data.heightCm ? data.heightCm + ' cm' : ''
+      }) berhasil dicatat!`
+    );
   };
 
   return (
     <div
       onContextMenu={(e) => {
-        // Klik Kanan / Long Press pop up menu untuk mode mobile & desktop
         e.preventDefault();
         setContextMenuPos({ x: e.clientX, y: e.clientY });
         setIsContextMenuOpen(true);
       }}
-      className="min-h-screen bg-[#FAF8F5] flex flex-col font-sans pb-20 md:pb-12 text-[#1F2937] select-none sm:select-auto"
+      className="min-h-screen flex flex-col font-sans pb-24 md:pb-16 text-[#1F2937] select-none sm:select-auto"
     >
       {/* 3-Zone Desktop & Mobile Top Bar */}
       <Header
@@ -288,83 +382,148 @@ export default function App() {
       />
 
       {/* Main Content Viewport */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-5 space-y-6">
+        {/* Bar Pasang di Layar + Mutiara Parenting 7 Hari (Pesan Berjalan & Mode Baca) */}
+        <ParentingQuoteBar />
+
         {/* Tab 1: Overview (Beranda Utama) */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Child Profile Hero Section (Hanya di Beranda) */}
+            {/* Child & Parents Biodata Hero Box */}
             <ChildHeroProfile
               profile={profile}
               latestStats={latestStats}
               onOpenUpload={handleOpenUpload}
               onEditProfile={() => setIsEditProfileOpen(true)}
               onOpenQuickGrowth={() => setIsQuickGrowthOpen(true)}
+              onNotify={showToast}
               onOpenMenu={() => {
                 setContextMenuPos(null);
                 setIsContextMenuOpen(true);
               }}
             />
 
-            {/* Quick Section: Sorotan Momen & Kolase Terbaru */}
-            <div className="bg-[#FFFDF9] rounded-3xl border border-[#EDE8DF] p-5 sm:p-6 shadow-xs space-y-4">
-              <div className="flex items-center justify-between">
+            {/* Section: Momen & Kenangan Terkini (Polaroid Cards with Clothespins, Edit & Download) */}
+            <section className="space-y-4 pt-1">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                 <div>
-                  <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight flex items-center gap-2">
-                    <span>Momen & Kenangan Terkini</span>
-                    <span className="text-[11px] font-medium text-amber-800 bg-amber-100/80 px-2.5 py-0.5 rounded-full">
+                  <h2 className="text-base sm:text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap">
+                    <span>Momen &amp; Kenangan Terkini</span>
+                    <span className="text-[11px] font-bold text-amber-800 bg-amber-100/90 border border-amber-200/80 px-2.5 py-0.5 rounded-full">
                       Polaroid Terbaru
                     </span>
                   </h2>
-                  <p className="text-[11px] sm:text-xs text-slate-500">
-                    Kilas potret tumbuh kembang {profile.nickname}
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Kilas potret tumbuh kembang {profile.name}
                   </p>
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => setActiveTab('gallery')}
-                  className="px-3 py-1.5 text-xs font-bold text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/80 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                  className="self-start sm:self-auto px-4 py-2 text-xs font-bold text-teal-800 hover:text-teal-950 bg-white/90 hover:bg-teal-50 border border-teal-300/90 rounded-full transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
                 >
-                  <Images className="w-3.5 h-3.5" />
                   <span>Buka Galeri Kolase &rarr;</span>
                 </button>
               </div>
 
-              {/* Mini Collage Grid for Overview (Latest 4 Moments) */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-                {moments.slice(0, 4).map((moment) => {
+              {/* Polaroid Grid: Latest 3 Moments + Dashed "+ Tambah Momen" Card */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-5 pt-2">
+                {moments.slice(0, 3).map((moment, idx) => {
                   const mAge = calculateAge(profile.birthDate, moment.date);
+                  const pinVariant = idx % 2 === 0 ? 'wood' : 'mint';
+
                   return (
                     <div
                       key={moment.id}
                       onClick={() => setSelectedMoment(moment)}
-                      className="group bg-white p-2.5 sm:p-3 rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col"
+                      className="group relative pt-3 cursor-pointer"
                     >
-                      <div className="aspect-square rounded-xl overflow-hidden bg-slate-100 relative mb-2">
-                        <img
-                          src={moment.mediaUrl}
-                          alt={moment.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          loading="lazy"
-                        />
-                        {moment.weightKg && (
-                          <div className="absolute top-1.5 right-1.5 bg-slate-900/80 backdrop-blur-xs text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md">
-                            {moment.weightKg} kg
+                      <Clothespin
+                        variant={pinVariant}
+                        className="absolute top-0 left-1/2 -translate-x-1/2"
+                      />
+
+                      <div className="h-full bg-white p-2.5 sm:p-3.5 pb-3.5 rounded-3xl border border-slate-200/90 shadow-sm group-hover:shadow-md transition-all flex flex-col justify-between">
+                        <div className="aspect-[4/5] rounded-2xl overflow-hidden bg-slate-100 relative mb-2.5">
+                          <img
+                            src={moment.mediaUrl}
+                            alt={moment.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            loading="lazy"
+                          />
+                          {moment.weightKg && (
+                            <div className="absolute top-2 right-2 bg-slate-900/85 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+                              {moment.weightKg} kg
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-start justify-between gap-1.5 px-0.5">
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-xs sm:text-sm font-bold text-slate-800 truncate group-hover:text-teal-700 transition-colors">
+                              {moment.title}
+                            </h4>
+                            <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">
+                              Usia {mAge.label}
+                            </p>
                           </div>
-                        )}
-                      </div>
-                      <div className="space-y-0.5">
-                        <h4 className="text-xs font-bold text-slate-800 truncate group-hover:text-emerald-700">
-                          {moment.title}
-                        </h4>
-                        <p className="text-[10px] text-slate-400">
-                          Usia {mAge.label}
-                        </p>
+
+                          {/* Direct Edit & Download Buttons on Card */}
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenEditMoment(moment);
+                              }}
+                              title="Edit foto atau catatan momen"
+                              aria-label="Edit momen"
+                              className="w-7 h-7 rounded-lg text-slate-400 hover:text-teal-700 hover:bg-teal-50 flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDownloadMoment(moment);
+                              }}
+                              title="Unduh foto ini"
+                              aria-label="Unduh foto"
+                              className="w-7 h-7 rounded-lg text-slate-400 hover:text-teal-700 hover:bg-teal-50 flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );
                 })}
+
+                {/* Dashed "+ Tambah Momen" Card (Matching Reference Screenshot) */}
+                <div className="pt-3">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenUpload('media')}
+                    className="w-full h-full min-h-[220px] sm:min-h-[260px] rounded-3xl border-2 border-dashed border-slate-300/90 hover:border-teal-500 bg-white/55 hover:bg-teal-50/40 transition-all flex flex-col items-center justify-center p-4 text-center gap-2 cursor-pointer group"
+                  >
+                    <div className="w-12 h-12 rounded-full bg-teal-50 group-hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-transform group-hover:scale-105">
+                      <Plus className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <span className="block text-xs sm:text-sm font-extrabold text-slate-800 group-hover:text-teal-800">
+                        + Tambah Momen
+                      </span>
+                      <span className="block text-[11px] text-slate-400">
+                        Kamera / Galeri
+                      </span>
+                    </div>
+                  </button>
+                </div>
               </div>
-            </div>
+            </section>
 
             {/* Quick Teaser for Growth Chart & Milestones */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -376,11 +535,10 @@ export default function App() {
                       <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
                         <TrendingUp className="w-4 h-4" />
                       </div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Kurva Pertumbuhan WHO
-                      </h3>
+                      <h3 className="text-sm font-bold text-slate-900">Kurva Pertumbuhan WHO</h3>
                     </div>
                     <button
+                      type="button"
                       onClick={() => setIsQuickGrowthOpen(true)}
                       className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200"
                     >
@@ -388,11 +546,16 @@ export default function App() {
                     </button>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Pengukuran terakhir: <span className="font-semibold text-slate-800">{latestStats.weightKg} kg</span> & <span className="font-semibold text-slate-800">{latestStats.heightCm} cm</span>. Status grafik sesuai standar pita WHO.
+                    Pengukuran terakhir:{' '}
+                    <span className="font-semibold text-slate-800">{latestStats.weightKg} kg</span>{' '}
+                    &amp;{' '}
+                    <span className="font-semibold text-slate-800">{latestStats.heightCm} cm</span>.
+                    Status grafik sesuai standar pita WHO.
                   </p>
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => setActiveTab('charts')}
                   className="w-full py-2.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 rounded-xl transition-all cursor-pointer text-center"
                 >
@@ -408,20 +571,20 @@ export default function App() {
                       <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
                         <Award className="w-4 h-4" />
                       </div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Buku Tahapan Milestone
-                      </h3>
+                      <h3 className="text-sm font-bold text-slate-900">Buku Tahapan Milestone</h3>
                     </div>
                     <span className="text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full">
-                      {milestones.filter(m => m.completed).length} / {milestones.length} Tercapai
+                      {milestones.filter((m) => m.completed).length} / {milestones.length} Tercapai
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Pantau tahapan motorik, bicara, dan sosial emosional buah hati dengan panduan standar medis.
+                    Pantau tahapan motorik, bicara, dan sosial emosional buah hati dengan panduan
+                    standar IDAI &amp; WHO.
                   </p>
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => setActiveTab('milestones')}
                   className="w-full py-2.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 rounded-xl transition-all cursor-pointer text-center"
                 >
@@ -438,6 +601,8 @@ export default function App() {
             moments={moments}
             birthDate={profile.birthDate}
             onSelectMoment={setSelectedMoment}
+            onEditMoment={handleOpenEditMoment}
+            onDownloadMoment={(m) => void handleDownloadMoment(m)}
             onOpenUpload={() => handleOpenUpload('media')}
           />
         )}
@@ -461,10 +626,11 @@ export default function App() {
           />
         )}
 
-        {/* Subtle Quick Footer Link for Mobile Simplicity */}
+        {/* Subtle Quick Footer Link */}
         <div className="flex items-center justify-between text-xs text-slate-400 pt-2 px-2">
           <span>Tip: Klik kanan atau tap lama untuk membuka menu cepat</span>
           <button
+            type="button"
             onClick={() => setIsStorageModalOpen(true)}
             className="text-sky-700 hover:underline flex items-center gap-1 cursor-pointer"
           >
@@ -474,10 +640,14 @@ export default function App() {
         </div>
       </main>
 
+      {/* Floating Transparent FAQ & Konsultasi dr. AI */}
+      <FloatingDoctorFAQ profile={profile} latestStats={latestStats} />
+
       {/* Floating Bottom Navigation Bar for Mobile */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1 shadow-lg">
         <div className="grid grid-cols-4 items-center h-14">
           <button
+            type="button"
             onClick={() => setActiveTab('overview')}
             className={`flex flex-col items-center justify-center h-full min-h-[44px] cursor-pointer ${
               activeTab === 'overview' ? 'text-emerald-700 font-bold' : 'text-slate-500'
@@ -488,6 +658,7 @@ export default function App() {
           </button>
 
           <button
+            type="button"
             onClick={() => setActiveTab('gallery')}
             className={`flex flex-col items-center justify-center h-full min-h-[44px] cursor-pointer ${
               activeTab === 'gallery' ? 'text-emerald-700 font-bold' : 'text-slate-500'
@@ -498,6 +669,7 @@ export default function App() {
           </button>
 
           <button
+            type="button"
             onClick={() => setActiveTab('charts')}
             className={`flex flex-col items-center justify-center h-full min-h-[44px] cursor-pointer ${
               activeTab === 'charts' ? 'text-emerald-700 font-bold' : 'text-slate-500'
@@ -508,6 +680,7 @@ export default function App() {
           </button>
 
           <button
+            type="button"
             onClick={() => setActiveTab('milestones')}
             className={`flex flex-col items-center justify-center h-full min-h-[44px] cursor-pointer ${
               activeTab === 'milestones' ? 'text-emerald-700 font-bold' : 'text-slate-500'
@@ -519,7 +692,7 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Pop-up Modal Pengaturan Penyimpanan (Disembunyikan dari tampilan utama mobile) */}
+      {/* Pop-up Modal Pengaturan Penyimpanan */}
       <StorageModal
         isOpen={isStorageModalOpen}
         onClose={() => setIsStorageModalOpen(false)}
@@ -549,11 +722,16 @@ export default function App() {
         onNavigateTab={(tab) => setActiveTab(tab)}
       />
 
-      {/* Upload Media & Milestone Modal */}
+      {/* Upload & Edit Media / Milestone Modal */}
       <UploadModal
         isOpen={isUploadOpen}
-        onClose={() => setIsUploadOpen(false)}
+        onClose={() => {
+          setIsUploadOpen(false);
+          setEditingMoment(null);
+        }}
         onSaveMoment={handleSaveNewMoment}
+        onUpdateMoment={handleUpdateMoment}
+        editingMoment={editingMoment}
         childName={profile.nickname}
         initialMode={uploadMode}
         storageDestination={storageDestination}
@@ -562,7 +740,7 @@ export default function App() {
         onConnectGoogle={handleConnectGoogle}
       />
 
-      {/* Lightbox / Moment Detail Viewer with Prev/Next navigation */}
+      {/* Lightbox / Moment Detail Viewer with Edit, Download & Prev/Next navigation */}
       {(() => {
         const currentMomentIndex = selectedMoment
           ? moments.findIndex((m) => m.id === selectedMoment.id)
@@ -574,6 +752,8 @@ export default function App() {
             birthDate={profile.birthDate}
             childName={profile.nickname}
             onClose={() => setSelectedMoment(null)}
+            onEditMoment={handleOpenEditMoment}
+            onNotify={showToast}
             onPrev={
               currentMomentIndex > 0
                 ? () => setSelectedMoment(moments[currentMomentIndex - 1])
@@ -588,7 +768,7 @@ export default function App() {
         );
       })()}
 
-      {/* Edit Child Profile Modal (dengan upload foto & ganti avatar) */}
+      {/* Edit Child & Parents Biodata Modal */}
       <EditProfileModal
         isOpen={isEditProfileOpen}
         profile={profile}
@@ -596,7 +776,7 @@ export default function App() {
         onSaveProfile={(updated) => {
           setProfile(updated);
           saveToStorage(STORAGE_KEYS.PROFILE, updated);
-          showToast('Profil dan foto anak berhasil diperbarui!');
+          showToast('Biodata anak serta info Ayah & Ibu berhasil diperbarui!');
         }}
       />
 
@@ -616,7 +796,7 @@ export default function App() {
 
       {/* Notification Toast */}
       {toastMessage && (
-        <div className="fixed bottom-18 md:bottom-6 right-4 sm:right-6 z-50 bg-slate-900 text-white text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 animate-in slide-in-from-bottom duration-200">
+        <div className="fixed bottom-32 md:bottom-20 right-4 sm:right-6 z-50 bg-slate-900 text-white text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 animate-in slide-in-from-bottom duration-200">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
