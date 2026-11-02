@@ -9,9 +9,12 @@ import {
   Baby,
   Users,
   Loader2,
+  Plus,
+  Trash2,
 } from 'lucide-react';
-import type { ChildProfile, Gender } from '../types/index.ts';
+import type { ChildProfile, FamilyExtraPhoto, Gender } from '../types/index.ts';
 import { downloadMediaFile } from '../utils/downloadMedia.ts';
+import { MAX_EXTRA_FAMILY_PHOTOS, readImageAsDataUrl } from '../utils/imageHelper.ts';
 import { Clothespin } from './Clothespin.tsx';
 
 const PROFILE_SAVE_TIMEOUT_MS = 5000;
@@ -34,48 +37,6 @@ const PRESET_CHILD_AVATARS = [
 
 const BLOOD_TYPES = ['-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'A', 'B', 'AB', 'O'];
 
-function readImageAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Gagal membaca foto'));
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        const img = new Image();
-        img.onerror = () => resolve(reader.result as string);
-        img.onload = () => {
-          try {
-            const maxDim = 960;
-            let { width, height } = img;
-            if (width > maxDim || height > maxDim) {
-              if (width >= height) {
-                height = Math.round((height * maxDim) / width);
-                width = maxDim;
-              } else {
-                width = Math.round((width * maxDim) / height);
-                height = maxDim;
-              }
-            }
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
-              resolve(reader.result as string);
-              return;
-            }
-            ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.84));
-          } catch {
-            resolve(reader.result as string);
-          }
-        };
-        img.src = reader.result;
-      }
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   isOpen,
   profile,
@@ -86,6 +47,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const childCameraInputRef = useRef<HTMLInputElement>(null);
   const fatherFileInputRef = useRef<HTMLInputElement>(null);
   const motherFileInputRef = useRef<HTMLInputElement>(null);
+  const extraPhotosInputRef = useRef<HTMLInputElement>(null);
 
   const [showPresets, setShowPresets] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -115,6 +77,9 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [motherAvatarUrl, setMotherAvatarUrl] = useState(
     profile.motherAvatarUrl || '/src/assets/images/moment_eating_puree_1792555107552.jpg'
   );
+  const [extraFamilyPhotos, setExtraFamilyPhotos] = useState<FamilyExtraPhoto[]>(
+    profile.extraFamilyPhotos || []
+  );
 
   useEffect(() => {
     if (isOpen) {
@@ -140,6 +105,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       setMotherAvatarUrl(
         profile.motherAvatarUrl || '/src/assets/images/moment_eating_puree_1792555107552.jpg'
       );
+      setExtraFamilyPhotos(profile.extraFamilyPhotos || []);
     }
   }, [isOpen, profile]);
 
@@ -160,6 +126,38 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     e.target.value = '';
   };
 
+  const handleExtraPhotosPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = '';
+    if (files.length === 0) return;
+
+    const remaining = Math.max(0, MAX_EXTRA_FAMILY_PHOTOS - extraFamilyPhotos.length);
+    if (remaining === 0) return;
+
+    try {
+      const selected = files.slice(0, remaining);
+      const urls = await Promise.all(selected.map((file) => readImageAsDataUrl(file)));
+      const now = Date.now();
+      const added: FamilyExtraPhoto[] = urls.map((url, idx) => ({
+        id: `extra_${now}_${idx + 1}`,
+        url,
+      }));
+      setExtraFamilyPhotos((prev) => [...prev, ...added].slice(0, MAX_EXTRA_FAMILY_PHOTOS));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleExtraLabelChange = (id: string, nextLabel: string) => {
+    setExtraFamilyPhotos((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, label: nextLabel } : item))
+    );
+  };
+
+  const handleRemoveExtra = (id: string) => {
+    setExtraFamilyPhotos((prev) => prev.filter((item) => item.id !== id));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSaving) return;
@@ -167,6 +165,17 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     const cleanFullName = name.trim() || profile.name;
     const derivedNickname =
       nickname.trim() || cleanFullName.split(' ')[0] || profile.nickname;
+
+    const cleanedExtras: FamilyExtraPhoto[] = extraFamilyPhotos
+      .slice(0, MAX_EXTRA_FAMILY_PHOTOS)
+      .map((item) => {
+        const trimmedLabel = (item.label || '').trim();
+        return {
+          id: item.id,
+          url: item.url,
+          ...(trimmedLabel ? { label: trimmedLabel } : {}),
+        };
+      });
 
     const updatedProfileDraft: ChildProfile = {
       ...profile,
@@ -182,6 +191,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       motherName: motherName.trim() || undefined,
       motherInfo: motherInfo.trim() || undefined,
       motherAvatarUrl,
+      extraFamilyPhotos: cleanedExtras,
       birthWeightKg: parseFloat(birthWeightKg) || profile.birthWeightKg,
       birthHeightCm: parseFloat(birthHeightCm) || profile.birthHeightCm,
       birthHeadCircumferenceCm: parseFloat(birthHeadCircCm) || profile.birthHeadCircumferenceCm,
@@ -583,6 +593,91 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Foto Tambahan di Bawah Ayah & Bunda (Opsional — Bisa > 1 Foto) */}
+              <div className="pt-3 border-t border-[#E9E4DB] space-y-2.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <span className="block text-xs font-bold text-slate-800">
+                      Foto Tambahan di Bawah Ayah &amp; Bunda (Opsional)
+                    </span>
+                    <span className="block text-[11px] text-slate-500">
+                      Bisa pilih lebih dari 1 foto sekaligus untuk mengisi kolom foto keluarga ({extraFamilyPhotos.length}/{MAX_EXTRA_FAMILY_PHOTOS})
+                    </span>
+                  </div>
+
+                  {extraFamilyPhotos.length < MAX_EXTRA_FAMILY_PHOTOS && (
+                    <button
+                      type="button"
+                      onClick={() => extraPhotosInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Tambah Foto</span>
+                    </button>
+                  )}
+                </div>
+
+                <input
+                  ref={extraPhotosInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(e) => void handleExtraPhotosPick(e)}
+                  className="hidden"
+                />
+
+                {extraFamilyPhotos.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {extraFamilyPhotos.map((extra, idx) => (
+                      <div
+                        key={extra.id}
+                        className="flex items-center gap-2.5 p-2 rounded-xl bg-white border border-slate-200/80"
+                      >
+                        <img
+                          src={extra.url}
+                          alt={extra.label || `Foto Tambahan ${idx + 1}`}
+                          referrerPolicy="no-referrer"
+                          className="w-11 h-11 rounded-lg object-cover border border-slate-100 bg-amber-50 shrink-0"
+                        />
+
+                        <input
+                          type="text"
+                          maxLength={30}
+                          value={extra.label || ''}
+                          onChange={(e) => handleExtraLabelChange(extra.id, e.target.value)}
+                          placeholder={`Label opsional (Foto ${idx + 1})`}
+                          className="min-w-0 flex-1 px-2 py-1.5 text-xs bg-[#FAF8F5] border border-slate-200 rounded-lg focus:outline-none focus:border-teal-500 text-slate-900"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void downloadMediaFile(
+                              extra.url,
+                              `foto-keluarga-${idx + 1}`,
+                              'image'
+                            )
+                          }
+                          title="Unduh foto ini"
+                          className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center shrink-0 cursor-pointer"
+                        >
+                          <Download className="w-3 h-3" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveExtra(extra.id)}
+                          title="Hapus foto tambahan ini"
+                          className="w-7 h-7 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

@@ -1,5 +1,11 @@
 export type Gender = 'male' | 'female';
 
+export interface FamilyExtraPhoto {
+  id: string;
+  url: string;
+  label?: string;
+}
+
 export interface ChildProfile {
   id: string;
   name: string;
@@ -14,6 +20,7 @@ export interface ChildProfile {
   motherName?: string;
   motherInfo?: string;
   motherAvatarUrl?: string;
+  extraFamilyPhotos?: FamilyExtraPhoto[];
   birthWeightKg: number;
   birthHeightCm: number;
   birthHeadCircumferenceCm?: number;

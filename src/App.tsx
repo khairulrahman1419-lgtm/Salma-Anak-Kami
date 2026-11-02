@@ -954,8 +954,8 @@ export default function App() {
               latestStats={latestStats}
               isPendingLocalSync={isProfilePendingSync}
               onRetrySync={() => void flushPendingOfflineQueue()}
-              onOpenUpload={handleOpenUpload}
               onEditProfile={() => setIsEditProfileOpen(true)}
+              onSaveProfile={handleSaveProfileOnline}
               onOpenQuickGrowth={() => setIsQuickGrowthOpen(true)}
               onNotify={showToast}
               onOpenMenu={() => {

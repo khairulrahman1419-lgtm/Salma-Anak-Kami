@@ -29,8 +29,10 @@ import {
   uploadChildMediaOnline,
 } from './mediaFirebaseStorage.ts';
 import { getClientDeviceId } from './realtimeFamilySync.ts';
+import { MAX_EXTRA_FAMILY_PHOTOS } from '../utils/imageHelper.ts';
 import type {
   ChildProfile,
+  FamilyExtraPhoto,
   GrowthRecord,
   MilestoneChecklistItem,
   MomentItem,
@@ -232,38 +234,61 @@ export async function syncProfileToFirestore(
       throw new Error('Perangkat sedang offline.');
     }
 
-    // 1. Upload foto profil baru ke Cloudinary dalam batas waktu total (maks 5 detik)
+    // 1. Upload foto profil baru & foto tambahan keluarga ke Cloudinary dalam batas waktu total (maks 5 detik)
+    const rawExtras = (profile.extraFamilyPhotos || []).slice(0, MAX_EXTRA_FAMILY_PHOTOS);
     const uploadBudgetMs = Math.max(500, totalTimeoutMs - (Date.now() - startedAt));
-    const [avatarUrl, fatherAvatarUrl, motherAvatarUrl] = await withCloudTimeout(
-      Promise.all([
-        uploadAvatarToCloudinaryWithTimeout(
-          profile.avatarUrl,
-          'avatar_salma.jpg',
-          uploadBudgetMs,
-          abortController.signal
-        ),
-        uploadAvatarToCloudinaryWithTimeout(
-          profile.fatherAvatarUrl,
-          'avatar_ayah.jpg',
-          uploadBudgetMs,
-          abortController.signal
-        ),
-        uploadAvatarToCloudinaryWithTimeout(
-          profile.motherAvatarUrl,
-          'avatar_bunda.jpg',
-          uploadBudgetMs,
-          abortController.signal
-        ),
-      ]),
-      uploadBudgetMs,
-      'Waktu unggah foto ke Cloudinary melebihi batas 5 detik.'
-    );
+    const [avatarUrl, fatherAvatarUrl, motherAvatarUrl, ...uploadedExtraUrls] =
+      await withCloudTimeout(
+        Promise.all([
+          uploadAvatarToCloudinaryWithTimeout(
+            profile.avatarUrl,
+            'avatar_salma.jpg',
+            uploadBudgetMs,
+            abortController.signal
+          ),
+          uploadAvatarToCloudinaryWithTimeout(
+            profile.fatherAvatarUrl,
+            'avatar_ayah.jpg',
+            uploadBudgetMs,
+            abortController.signal
+          ),
+          uploadAvatarToCloudinaryWithTimeout(
+            profile.motherAvatarUrl,
+            'avatar_bunda.jpg',
+            uploadBudgetMs,
+            abortController.signal
+          ),
+          ...rawExtras.map((extra, idx) =>
+            uploadAvatarToCloudinaryWithTimeout(
+              extra.url,
+              `keluarga_extra_${idx + 1}.jpg`,
+              uploadBudgetMs,
+              abortController.signal
+            )
+          ),
+        ]),
+        uploadBudgetMs,
+        'Waktu unggah foto ke Cloudinary melebihi batas 5 detik.'
+      );
+
+    const upgradedExtras: FamilyExtraPhoto[] = rawExtras
+      .map((extra, idx) => {
+        const resolvedUrl = (uploadedExtraUrls[idx] || extra.url || '').trim();
+        const trimmedLabel = (extra.label || '').trim().slice(0, 40);
+        return {
+          id: sanitizeDocId(extra.id || `extra_${idx + 1}`),
+          url: resolvedUrl,
+          ...(trimmedLabel ? { label: trimmedLabel } : {}),
+        };
+      })
+      .filter((item) => Boolean(item.url) && !item.url.startsWith('data:') && item.url.length <= 2048);
 
     const upgradedProfile: ChildProfile = {
       ...profile,
       avatarUrl: avatarUrl || profile.avatarUrl,
       fatherAvatarUrl: fatherAvatarUrl || profile.fatherAvatarUrl,
       motherAvatarUrl: motherAvatarUrl || profile.motherAvatarUrl,
+      extraFamilyPhotos: upgradedExtras,
     };
 
     // 2. Simpan dokumen biodata ke Cloud Firestore dalam sisa batas waktu total (maks 5 detik)
@@ -295,6 +320,11 @@ export async function syncProfileToFirestore(
             motherName: clampStr(upgradedProfile.motherName, 80, 'Bunda'),
             motherInfo: clampStr(upgradedProfile.motherInfo, 300, ''),
             motherAvatarUrl: clampStr(upgradedProfile.motherAvatarUrl, 2048, ''),
+            extraFamilyPhotos: upgradedExtras.map((item) => ({
+              id: sanitizeDocId(item.id),
+              url: clampStr(item.url, 2048, ''),
+              label: clampStr(item.label, 40, ''),
+            })),
             birthWeightKg: Math.min(
               20,
               Math.max(0.5, Number(upgradedProfile.birthWeightKg) || 3.3)
@@ -586,6 +616,17 @@ export function subscribeFamilyCloudJournal(
         d.updatedByDeviceId !== myDeviceId;
       initialProfileLoaded = true;
 
+      const parsedExtraPhotos: FamilyExtraPhoto[] | undefined = Array.isArray(d.extraFamilyPhotos)
+        ? d.extraFamilyPhotos
+            .slice(0, MAX_EXTRA_FAMILY_PHOTOS)
+            .map((raw: any, idx: number) => ({
+              id: String(raw?.id || `extra_${idx + 1}`),
+              url: String(raw?.url || ''),
+              ...(raw?.label ? { label: String(raw.label) } : {}),
+            }))
+            .filter((item: FamilyExtraPhoto) => Boolean(item.url))
+        : seedState.profile.extraFamilyPhotos;
+
       callbacks.onProfile(
         {
           id: seedState.profile.id,
@@ -605,6 +646,7 @@ export function subscribeFamilyCloudJournal(
           motherAvatarUrl: d.motherAvatarUrl
             ? String(d.motherAvatarUrl)
             : seedState.profile.motherAvatarUrl,
+          extraFamilyPhotos: parsedExtraPhotos,
           birthWeightKg: Number(d.birthWeightKg) || seedState.profile.birthWeightKg,
           birthHeightCm: Number(d.birthHeightCm) || seedState.profile.birthHeightCm,
           birthHeadCircumferenceCm:

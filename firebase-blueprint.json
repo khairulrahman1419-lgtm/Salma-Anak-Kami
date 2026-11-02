@@ -97,7 +97,11 @@
           "type": "string",
           "maxLength": 2048,
           "minLength": 0,
-          "description": "Firebase Storage download URL or asset path to mother avatar image."
+          "description": "Firebase Storage or Cloudinary URL or asset path to mother avatar image."
+        },
+        "extraFamilyPhotos": {
+          "type": "array",
+          "description": "Optional bounded list (up to 8) of additional family photos displayed underneath Ayah & Bunda."
         },
         "birthWeightKg": {
           "type": "number",
