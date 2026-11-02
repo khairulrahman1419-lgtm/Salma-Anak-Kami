@@ -86,6 +86,20 @@ export default defineConfig(() => {
                 },
               },
             },
+            {
+              urlPattern: /^https:\/\/res\.cloudinary\.com\/la3st6qh\/.*/i,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'salma-cloudinary-media-cache',
+                expiration: {
+                  maxEntries: 120,
+                  maxAgeSeconds: 60 * 60 * 24 * 60,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
           ],
         },
         devOptions: {

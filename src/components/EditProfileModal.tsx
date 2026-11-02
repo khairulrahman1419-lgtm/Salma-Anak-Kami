@@ -8,16 +8,19 @@ import {
   Download,
   Baby,
   Users,
+  Loader2,
 } from 'lucide-react';
 import type { ChildProfile, Gender } from '../types/index.ts';
 import { downloadMediaFile } from '../utils/downloadMedia.ts';
 import { Clothespin } from './Clothespin.tsx';
 
+const PROFILE_SAVE_TIMEOUT_MS = 5000;
+
 interface EditProfileModalProps {
   isOpen: boolean;
   profile: ChildProfile;
   onClose: () => void;
-  onSaveProfile: (updated: ChildProfile) => void;
+  onSaveProfile: (updated: ChildProfile) => Promise<unknown> | void;
 }
 
 const PRESET_CHILD_AVATARS = [
@@ -41,7 +44,7 @@ function readImageAsDataUrl(file: File): Promise<string> {
         img.onerror = () => resolve(reader.result as string);
         img.onload = () => {
           try {
-            const maxDim = 900;
+            const maxDim = 960;
             let { width, height } = img;
             if (width > maxDim || height > maxDim) {
               if (width >= height) {
@@ -61,7 +64,7 @@ function readImageAsDataUrl(file: File): Promise<string> {
               return;
             }
             ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.82));
+            resolve(canvas.toDataURL('image/jpeg', 0.84));
           } catch {
             resolve(reader.result as string);
           }
@@ -85,6 +88,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const motherFileInputRef = useRef<HTMLInputElement>(null);
 
   const [showPresets, setShowPresets] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Child Biodata States
   const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl);
@@ -156,13 +160,15 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     e.target.value = '';
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
+
     const cleanFullName = name.trim() || profile.name;
     const derivedNickname =
       nickname.trim() || cleanFullName.split(' ')[0] || profile.nickname;
 
-    onSaveProfile({
+    const updatedProfileDraft: ChildProfile = {
       ...profile,
       avatarUrl,
       name: cleanFullName,
@@ -180,14 +186,36 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       birthHeightCm: parseFloat(birthHeightCm) || profile.birthHeightCm,
       birthHeadCircumferenceCm: parseFloat(birthHeadCircCm) || profile.birthHeadCircumferenceCm,
       specialNotes: specialNotes.trim() || undefined,
-    });
-    onClose();
+    };
+
+    setIsSaving(true);
+    try {
+      // Maksimal 5 detik untuk proses upload Cloudinary & simpan Firestore
+      // (data lokal IndexedDB / LocalStorage langsung diamankan terlebih dahulu di onSaveProfile)
+      await Promise.race([
+        Promise.resolve(onSaveProfile(updatedProfileDraft)),
+        new Promise<void>((_, reject) => {
+          setTimeout(
+            () => reject(new Error('Batas waktu sinkronisasi 5 detik terlampaui.')),
+            PROFILE_SAVE_TIMEOUT_MS
+          );
+        }),
+      ]);
+    } catch (err) {
+      console.warn(
+        'Koneksi Cloud lambat/terkendala, biodata telah disimpan lokal (menunggu sinkronisasi):',
+        err
+      );
+    } finally {
+      setIsSaving(false);
+      onClose();
+    }
   };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/55 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200">
       <div className="relative w-full max-w-lg pt-4">
-        {/* Top Wooden Clothespin Accent (Matching User Reference Screenshot) */}
+        {/* Top Wooden Clothespin Accent */}
         <Clothespin
           variant="wood"
           className="absolute top-0 left-1/2 -translate-x-1/2 scale-110"
@@ -205,13 +233,14 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                   Ubah Biodata &amp; Foto Anak
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Edit profil si kecil, data kelahiran &amp; info Ayah Ibu
+                  Otomatis diperbarui secara real-time di HP Ayah &amp; Ibu
                 </p>
               </div>
             </div>
             <button
               type="button"
               onClick={onClose}
+              disabled={isSaving}
               aria-label="Tutup"
               className="w-9 h-9 rounded-full border border-slate-200 text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center cursor-pointer shrink-0"
             >
@@ -337,6 +366,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                 <input
                   type="text"
                   required
+                  maxLength={120}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Contoh: Salma Nur Khalisa"
@@ -348,6 +378,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                 <label className="block text-xs font-bold text-slate-800">Nama Panggilan</label>
                 <input
                   type="text"
+                  maxLength={60}
                   value={nickname}
                   onChange={(e) => setNickname(e.target.value)}
                   placeholder="Salma"
@@ -434,7 +465,11 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        void downloadMediaFile(fatherAvatarUrl, `foto-${fatherName || 'ayah'}`, 'image')
+                        void downloadMediaFile(
+                          fatherAvatarUrl,
+                          `foto-${fatherName || 'ayah'}`,
+                          'image'
+                        )
                       }
                       title="Unduh foto Ayah"
                       className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center cursor-pointer"
@@ -454,6 +489,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                     <label className="block text-[11px] font-bold text-slate-700">Nama Ayah</label>
                     <input
                       type="text"
+                      maxLength={80}
                       value={fatherName}
                       onChange={(e) => setFatherName(e.target.value)}
                       placeholder="Misal: Ayah Rahman"
@@ -462,13 +498,14 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                   </div>
                   <div className="space-y-1">
                     <label className="block text-[11px] font-bold text-slate-700">
-                      Info / Kontak / Catatan Ayah
+                      Info / Peran / Catatan Ayah
                     </label>
                     <input
                       type="text"
+                      maxLength={300}
                       value={fatherInfo}
                       onChange={(e) => setFatherInfo(e.target.value)}
-                      placeholder="No. HP / Gol. Darah / Peran"
+                      placeholder="Gol. Darah / Peran"
                       className="w-full px-2.5 py-1.5 text-xs bg-[#FAF8F5] border border-slate-200 rounded-lg focus:outline-none focus:border-teal-500 text-slate-900"
                     />
                   </div>
@@ -499,7 +536,11 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        void downloadMediaFile(motherAvatarUrl, `foto-${motherName || 'ibu'}`, 'image')
+                        void downloadMediaFile(
+                          motherAvatarUrl,
+                          `foto-${motherName || 'ibu'}`,
+                          'image'
+                        )
                       }
                       title="Unduh foto Ibu"
                       className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center cursor-pointer"
@@ -521,6 +562,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                     </label>
                     <input
                       type="text"
+                      maxLength={80}
                       value={motherName}
                       onChange={(e) => setMotherName(e.target.value)}
                       placeholder="Misal: Bunda Sarah"
@@ -529,13 +571,14 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                   </div>
                   <div className="space-y-1">
                     <label className="block text-[11px] font-bold text-slate-700">
-                      Info / Kontak / Catatan Ibu
+                      Info / Peran / Catatan Ibu
                     </label>
                     <input
                       type="text"
+                      maxLength={300}
                       value={motherInfo}
                       onChange={(e) => setMotherInfo(e.target.value)}
-                      placeholder="No. HP / Gol. Darah / ASI & MPASI"
+                      placeholder="Gol. Darah / ASI & MPASI"
                       className="w-full px-2.5 py-1.5 text-xs bg-[#FAF8F5] border border-slate-200 rounded-lg focus:outline-none focus:border-teal-500 text-slate-900"
                     />
                   </div>
@@ -592,6 +635,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               </label>
               <textarea
                 rows={2}
+                maxLength={1000}
                 value={specialNotes}
                 onChange={(e) => setSpecialNotes(e.target.value)}
                 placeholder="Contoh: Buah hati tercinta Ayah & Ibu. Lahir spontan sehat, ASI eksklusif dilanjutkan MPASI bernutrisi."
@@ -604,16 +648,27 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
+                disabled={isSaving}
                 className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-900 cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="submit"
-                className="px-6 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-full transition-colors shadow-sm cursor-pointer flex items-center gap-2"
+                disabled={isSaving}
+                className="px-6 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-60 rounded-full transition-colors shadow-sm cursor-pointer flex items-center gap-2"
               >
-                <Save className="w-3.5 h-3.5 text-teal-300" />
-                <span>Simpan Perubahan</span>
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-300" />
+                    <span>Menyinkronkan...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5 text-teal-300" />
+                    <span>Simpan Perubahan</span>
+                  </>
+                )}
               </button>
             </div>
           </form>

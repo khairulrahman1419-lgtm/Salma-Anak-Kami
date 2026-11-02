@@ -309,13 +309,53 @@ export const WHO_HEIGHT_BOYS = [
   { month: 36, p3: 89.9, p15: 93.2, p50: 96.5, p85: 99.8, p97: 103.1 },
 ];
 
-export function getWHOGrowthStatus(ageMonths: number, weightKg: number): {
+/**
+ * Standard WHO Child Growth Standard percentiles (Weight-for-age, 0-36 months for Girls).
+ */
+export const WHO_WEIGHT_GIRLS = [
+  { month: 0, p3: 2.4, p15: 2.8, p50: 3.2, p85: 3.7, p97: 4.2 },
+  { month: 2, p3: 3.9, p15: 4.5, p50: 5.1, p85: 5.8, p97: 6.6 },
+  { month: 4, p3: 5.0, p15: 5.6, p50: 6.4, p85: 7.3, p97: 8.2 },
+  { month: 6, p3: 5.7, p15: 6.5, p50: 7.3, p85: 8.2, p97: 9.3 },
+  { month: 9, p3: 6.5, p15: 7.3, p50: 8.2, p85: 9.3, p97: 10.5 },
+  { month: 12, p3: 7.0, p15: 7.9, p50: 8.9, p85: 10.1, p97: 11.5 },
+  { month: 15, p3: 7.6, p15: 8.5, p50: 9.6, p85: 10.9, p97: 12.4 },
+  { month: 18, p3: 8.1, p15: 9.1, p50: 10.2, p85: 11.6, p97: 13.2 },
+  { month: 21, p3: 8.6, p15: 9.6, p50: 10.9, p85: 12.4, p97: 14.0 },
+  { month: 24, p3: 9.0, p15: 10.2, p50: 11.5, p85: 13.0, p97: 14.8 },
+  { month: 30, p3: 10.0, p15: 11.2, p50: 12.7, p85: 14.5, p97: 16.5 },
+  { month: 36, p3: 10.8, p15: 12.2, p50: 13.9, p85: 15.8, p97: 18.1 },
+];
+
+/**
+ * Standard WHO Child Growth Standard percentiles (Height-for-age, 0-36 months for Girls).
+ */
+export const WHO_HEIGHT_GIRLS = [
+  { month: 0, p3: 45.4, p15: 47.3, p50: 49.1, p85: 51.0, p97: 52.9 },
+  { month: 2, p3: 53.0, p15: 55.0, p50: 57.1, p85: 59.1, p97: 61.1 },
+  { month: 4, p3: 57.8, p15: 59.9, p50: 62.1, p85: 64.3, p97: 66.4 },
+  { month: 6, p3: 61.2, p15: 63.5, p50: 65.7, p85: 68.0, p97: 70.3 },
+  { month: 9, p3: 65.3, p15: 67.7, p50: 70.1, p85: 72.6, p97: 75.0 },
+  { month: 12, p3: 68.9, p15: 71.4, p50: 74.0, p85: 76.6, p97: 79.2 },
+  { month: 15, p3: 72.0, p15: 74.8, p50: 77.5, p85: 80.2, p97: 83.0 },
+  { month: 18, p3: 74.9, p15: 77.8, p50: 80.7, p85: 83.6, p97: 86.5 },
+  { month: 21, p3: 77.5, p15: 80.6, p50: 83.7, p85: 86.7, p97: 89.8 },
+  { month: 24, p3: 80.0, p15: 83.2, p50: 86.4, p85: 89.6, p97: 92.9 },
+  { month: 30, p3: 83.6, p15: 87.1, p50: 90.7, p85: 94.2, p97: 97.7 },
+  { month: 36, p3: 87.4, p15: 91.2, p50: 95.1, p85: 98.9, p97: 102.7 },
+];
+
+export function getWHOGrowthStatus(
+  ageMonths: number,
+  weightKg: number,
+  gender: Gender = 'female'
+): {
   status: 'ideal' | 'perhatian' | 'pantau';
   label: string;
   badgeClass: string;
 } {
-  // Find nearest WHO bracket
-  const bracket = WHO_WEIGHT_BOYS.reduce((prev, curr) =>
+  const table = gender === 'female' ? WHO_WEIGHT_GIRLS : WHO_WEIGHT_BOYS;
+  const bracket = table.reduce((prev, curr) =>
     Math.abs(curr.month - ageMonths) < Math.abs(prev.month - ageMonths) ? curr : prev
   );
 

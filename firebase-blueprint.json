@@ -1,0 +1,535 @@
+{
+  "entities": {
+    "FamilyJournal": {
+      "title": "FamilyJournal",
+      "description": "Shared family journal profile containing Salma Nur Khalisa biodata and Ayah/Bunda metadata.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the primary parent who created the journal."
+        },
+        "partnerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 0,
+          "description": "Optional Firebase Auth UID of the co-parent (Ayah/Bunda) joined to this journal."
+        },
+        "inviteCode": {
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 4,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Short family sync code used by co-parent to link devices."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1,
+          "description": "Full name of the child."
+        },
+        "nickname": {
+          "type": "string",
+          "maxLength": 60,
+          "minLength": 1,
+          "description": "Nickname of the child."
+        },
+        "birthDate": {
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Child birth date in YYYY-MM-DD format."
+        },
+        "gender": {
+          "type": "string",
+          "enum": ["male", "female"],
+          "maxLength": 10,
+          "minLength": 4,
+          "description": "Child biological sex for WHO curve standards."
+        },
+        "bloodType": {
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 0,
+          "description": "Child blood type."
+        },
+        "avatarUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "minLength": 1,
+          "description": "Firebase Storage download URL or asset path to child profile photo."
+        },
+        "fatherName": {
+          "type": "string",
+          "maxLength": 80,
+          "minLength": 1,
+          "description": "Father display name."
+        },
+        "fatherInfo": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 0,
+          "description": "Father role or note."
+        },
+        "fatherAvatarUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "minLength": 0,
+          "description": "Firebase Storage download URL or asset path to father avatar image."
+        },
+        "motherName": {
+          "type": "string",
+          "maxLength": 80,
+          "minLength": 0,
+          "description": "Mother display name."
+        },
+        "motherInfo": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 0,
+          "description": "Mother role or note."
+        },
+        "motherAvatarUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "minLength": 0,
+          "description": "Firebase Storage download URL or asset path to mother avatar image."
+        },
+        "birthWeightKg": {
+          "type": "number",
+          "description": "Birth weight in kilograms."
+        },
+        "birthHeightCm": {
+          "type": "number",
+          "description": "Birth length in centimeters."
+        },
+        "birthHeadCircumferenceCm": {
+          "type": "number",
+          "description": "Birth head circumference in centimeters."
+        },
+        "specialNotes": {
+          "type": "string",
+          "maxLength": 1000,
+          "minLength": 0,
+          "description": "Special birth or health notes."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "partnerUid",
+        "inviteCode",
+        "name",
+        "nickname",
+        "birthDate",
+        "gender",
+        "bloodType",
+        "avatarUrl",
+        "fatherName",
+        "fatherInfo",
+        "fatherAvatarUrl",
+        "motherName",
+        "motherInfo",
+        "motherAvatarUrl",
+        "birthWeightKg",
+        "birthHeightCm",
+        "birthHeadCircumferenceCm",
+        "specialNotes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MomentEntry": {
+      "title": "MomentEntry",
+      "description": "Photo or video moment entry in the Polaroid timeline and collage gallery with Firebase Storage URL.",
+      "type": "object",
+      "properties": {
+        "journalId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partnerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 0
+        },
+        "authorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 160,
+          "minLength": 1
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": ["image", "video"],
+          "maxLength": 10,
+          "minLength": 5
+        },
+        "mediaUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "minLength": 1,
+          "description": "Firebase Storage download URL for the uploaded photo or video."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "milestone_fisik",
+            "kata_pertama",
+            "momen_lucu",
+            "bermain",
+            "makan_mpasi",
+            "kesehatan",
+            "ulang_tahun",
+            "lainnya"
+          ],
+          "maxLength": 32,
+          "minLength": 5
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000,
+          "minLength": 1
+        },
+        "weightKg": {
+          "type": "number"
+        },
+        "heightCm": {
+          "type": "number"
+        },
+        "headCircumferenceCm": {
+          "type": "number"
+        },
+        "googleDriveSynced": {
+          "type": "boolean"
+        },
+        "googleDriveFileId": {
+          "type": "string",
+          "maxLength": 256,
+          "minLength": 0
+        },
+        "googleDriveWebViewLink": {
+          "type": "string",
+          "maxLength": 2048,
+          "minLength": 0
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "journalId",
+        "ownerId",
+        "partnerUid",
+        "authorUid",
+        "title",
+        "date",
+        "mediaType",
+        "mediaUrl",
+        "category",
+        "notes",
+        "weightKg",
+        "heightCm",
+        "headCircumferenceCm",
+        "googleDriveSynced",
+        "googleDriveFileId",
+        "googleDriveWebViewLink",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GrowthEntry": {
+      "title": "GrowthEntry",
+      "description": "Anthropometric WHO growth measurement record (weight, height, head circumference).",
+      "type": "object",
+      "properties": {
+        "journalId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partnerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 0
+        },
+        "authorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "ageMonths": {
+          "type": "number"
+        },
+        "weightKg": {
+          "type": "number"
+        },
+        "heightCm": {
+          "type": "number"
+        },
+        "headCircumferenceCm": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "minLength": 0
+        },
+        "sourceMomentId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 0
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "journalId",
+        "ownerId",
+        "partnerUid",
+        "authorUid",
+        "date",
+        "ageMonths",
+        "weightKg",
+        "heightCm",
+        "headCircumferenceCm",
+        "notes",
+        "sourceMomentId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MilestoneEntry": {
+      "title": "MilestoneEntry",
+      "description": "Developmental milestone checklist item state and notes.",
+      "type": "object",
+      "properties": {
+        "journalId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partnerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 0
+        },
+        "authorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "domain": {
+          "type": "string",
+          "enum": ["motorik_kasar", "motorik_halus", "bahasa", "kognitif", "sosial"],
+          "maxLength": 32,
+          "minLength": 6
+        },
+        "ageRangeLabel": {
+          "type": "string",
+          "maxLength": 40,
+          "minLength": 1
+        },
+        "minAgeMonths": {
+          "type": "number"
+        },
+        "maxAgeMonths": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 180,
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 600,
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "minLength": 0
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "completedDate": {
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 0
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "journalId",
+        "ownerId",
+        "partnerUid",
+        "authorUid",
+        "domain",
+        "ageRangeLabel",
+        "minAgeMonths",
+        "maxAgeMonths",
+        "title",
+        "description",
+        "notes",
+        "completed",
+        "completedDate",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ParentingQuoteEntry": {
+      "title": "ParentingQuoteEntry",
+      "description": "Daily rotating Mutiara Parenting quote synced in real-time across family devices.",
+      "type": "object",
+      "properties": {
+        "journalId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partnerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 0
+        },
+        "authorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "orderIndex": {
+          "type": "number",
+          "description": "Zero-based rotation index for automatic daily quote selection."
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 600,
+          "minLength": 1,
+          "description": "Parenting reflection quote text."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "journalId",
+        "ownerId",
+        "partnerUid",
+        "authorUid",
+        "orderIndex",
+        "text",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/journals/{journalId}": {
+      "schema": "FamilyJournal",
+      "description": "Root family journal documents keyed by journalId."
+    },
+    "/journals/{journalId}/moments/{momentId}": {
+      "schema": "MomentEntry",
+      "description": "Child photo and video moment metadata with Firebase Storage URLs synced under a family journal."
+    },
+    "/journals/{journalId}/growth_records/{recordId}": {
+      "schema": "GrowthEntry",
+      "description": "Child WHO anthropometric measurements synced under a family journal."
+    },
+    "/journals/{journalId}/milestones/{milestoneId}": {
+      "schema": "MilestoneEntry",
+      "description": "Child developmental milestone statuses and notes synced under a family journal."
+    },
+    "/journals/{journalId}/parenting_quotes/{quoteId}": {
+      "schema": "ParentingQuoteEntry",
+      "description": "Mutiara Parenting daily quotes synced in real-time across family devices."
+    }
+  }
+}

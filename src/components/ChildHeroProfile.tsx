@@ -13,6 +13,8 @@ import {
   Download,
   Users,
   Droplets,
+  Clock,
+  RefreshCw,
 } from 'lucide-react';
 import type { ChildProfile } from '../types/index.ts';
 import {
@@ -30,6 +32,8 @@ import { Clothespin } from './Clothespin.tsx';
 interface ChildHeroProfileProps {
   profile: ChildProfile;
   latestStats: LatestMeasurements;
+  isPendingLocalSync?: boolean;
+  onRetrySync?: () => void;
   onOpenUpload: (mode: 'media' | 'milestone') => void;
   onEditProfile: () => void;
   onOpenQuickGrowth: () => void;
@@ -40,6 +44,8 @@ interface ChildHeroProfileProps {
 export const ChildHeroProfile: React.FC<ChildHeroProfileProps> = ({
   profile,
   latestStats,
+  isPendingLocalSync = false,
+  onRetrySync,
   onOpenUpload,
   onEditProfile,
   onOpenQuickGrowth,
@@ -47,7 +53,11 @@ export const ChildHeroProfile: React.FC<ChildHeroProfileProps> = ({
   onNotify,
 }) => {
   const age = calculateAge(profile.birthDate);
-  const whoStatus = getWHOGrowthStatus(latestStats.ageAtRecordMonths, latestStats.weightKg);
+  const whoStatus = getWHOGrowthStatus(
+    latestStats.ageAtRecordMonths,
+    latestStats.weightKg,
+    profile.gender
+  );
 
   const handleDownloadAvatar = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -138,6 +148,18 @@ export const ChildHeroProfile: React.FC<ChildHeroProfileProps> = ({
                   <Droplets className="w-2.5 h-2.5 text-rose-500" />
                   <span>Gol. {profile.bloodType}</span>
                 </span>
+              )}
+              {isPendingLocalSync && (
+                <button
+                  type="button"
+                  onClick={onRetrySync}
+                  title="Ketuk untuk mencoba sinkronisasi ulang ke Cloud sekarang"
+                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 hover:bg-amber-200/80 text-amber-900 border border-amber-300 whitespace-nowrap transition-colors cursor-pointer"
+                >
+                  <Clock className="w-2.5 h-2.5 text-amber-700 animate-pulse shrink-0" />
+                  <span>Tersimpan Lokal (Menunggu Sinkronisasi)</span>
+                  {onRetrySync && <RefreshCw className="w-2.5 h-2.5 text-amber-700 ml-0.5 shrink-0" />}
+                </button>
               )}
             </div>
 

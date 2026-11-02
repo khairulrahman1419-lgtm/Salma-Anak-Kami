@@ -2,11 +2,12 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * TumbuhKembang - Jurnal Ayah & Buah Hati
- * Aplikasi Dokumentasi Tumbuh Kembang, Galeri Kolase Pinterest & Kurva WHO
+ * Tracker Tumbuh Kembang Salma - Jurnal Ayah & Bunda
+ * Sinkronisasi Real-Time Cloud Firestore ("salma-anak-kami") + Penyimpanan Media Cloudinary ("la3st6qh")
+ * dengan Offline Fallback Otomatis (IndexedDB + localStorage).
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   TrendingUp,
   Cloud,
@@ -17,6 +18,7 @@ import {
   Layers,
   Edit2,
   Plus,
+  Video,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import type {
@@ -24,24 +26,52 @@ import type {
   GrowthRecord,
   MilestoneChecklistItem,
   MomentItem,
+  ParentingQuoteItem,
 } from './types/index.ts';
 import {
-  initialChildProfile,
-  initialGrowthRecords,
-  initialMilestones,
-  initialMoments,
-} from './data/initialData.ts';
+  INITIAL_CHILD_PROFILE,
+  INITIAL_MOMENTS,
+  INITIAL_GROWTH_RECORDS,
+  INITIAL_MILESTONES,
+  INITIAL_PARENTING_QUOTES,
+} from './utils/initialFallback.ts';
 import { getLatestMeasurements, calculateAge } from './utils/growth.ts';
-import {
-  exportAppBackup,
-  loadFromStorage,
-  saveToStorage,
-  STORAGE_KEYS,
-} from './utils/googleDriveService.ts';
+import { exportAppBackup } from './utils/googleDriveService.ts';
 import { downloadMediaFile } from './utils/downloadMedia.ts';
 
 import { initAuth, googleSignIn, logoutGoogle } from './services/googleAuth.ts';
 import { fetchDriveQuota } from './services/googleDriveClient.ts';
+import { uploadChildMediaOnline } from './services/mediaFirebaseStorage.ts';
+import {
+  OFFLINE_STORAGE_KEYS,
+  persistLocalState,
+  persistLocalStateAsync,
+  loadInitialLocalProfile,
+  loadInitialLocalMoments,
+  loadInitialLocalRecords,
+  loadInitialLocalMilestones,
+  loadInitialLocalQuotes,
+  hydrateStateFromIndexedDb,
+  enqueueOfflineMutation,
+  loadOfflineMutations,
+  removeOfflineMutation,
+} from './services/offlineStorage.ts';
+import {
+  SHARED_SALMA_JOURNAL_ID,
+  testFirestoreConnection,
+  getStoredJournalId,
+  joinPartnerCloudJournal,
+  subscribeFamilyCloudJournal,
+  syncProfileToFirestore,
+  syncMomentToFirestore,
+  syncGrowthToFirestore,
+  syncMilestoneToFirestore,
+  syncParentingQuoteToFirestore,
+} from './services/firestoreSync.ts';
+import {
+  connectRealtimeFamilySync,
+  pushFamilyMutation,
+} from './services/realtimeFamilySync.ts';
 
 import { Header } from './components/Header.tsx';
 import { ParentingQuoteBar } from './components/ParentingQuoteBar.tsx';
@@ -60,32 +90,32 @@ import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { FloatingDoctorFAQ } from './components/FloatingDoctorFAQ.tsx';
 
 export default function App() {
-  // App States with persistent LocalStorage
-  const [profile, setProfile] = useState<ChildProfile>(() => {
-    const saved = loadFromStorage(STORAGE_KEYS.PROFILE, initialChildProfile);
-    return {
-      ...initialChildProfile,
-      ...saved,
-    };
-  });
-
+  // State Utama dengan Offline Fallback (localStorage + IndexedDB) & Real-Time Firestore Sync
+  const [profile, setProfile] = useState<ChildProfile>(() =>
+    loadInitialLocalProfile(INITIAL_CHILD_PROFILE)
+  );
   const [moments, setMoments] = useState<MomentItem[]>(() =>
-    loadFromStorage(STORAGE_KEYS.MOMENTS, initialMoments)
+    loadInitialLocalMoments(INITIAL_MOMENTS)
   );
-
   const [records, setRecords] = useState<GrowthRecord[]>(() =>
-    loadFromStorage(STORAGE_KEYS.GROWTH_RECORDS, initialGrowthRecords)
+    loadInitialLocalRecords(INITIAL_GROWTH_RECORDS)
   );
-
   const [milestones, setMilestones] = useState<MilestoneChecklistItem[]>(() =>
-    loadFromStorage(STORAGE_KEYS.MILESTONES, initialMilestones)
+    loadInitialLocalMilestones(INITIAL_MILESTONES)
   );
+  const [parentingQuotes, setParentingQuotes] = useState<ParentingQuoteItem[]>(() =>
+    loadInitialLocalQuotes(INITIAL_PARENTING_QUOTES)
+  );
+  const [pendingOfflineCount, setPendingOfflineCount] = useState<number>(0);
+  const [isProfilePendingSync, setIsProfilePendingSync] = useState<boolean>(false);
+  const [isFlushingOffline, setIsFlushingOffline] = useState<boolean>(false);
 
-  // Storage Destination & Google Drive OAuth states
+  // Storage Destination & Firebase Auth States
   const [storageDestination, setStorageDestination] = useState<'google_drive' | 'vps_local'>(
     'google_drive'
   );
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [activeJournalId, setActiveJournalId] = useState<string>(() => getStoredJournalId());
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [driveQuota, setDriveQuota] = useState<{ usageGb: string; limitGb: string } | null>(null);
@@ -109,16 +139,358 @@ export default function App() {
   // Notification Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const showToast = (msg: string) => {
+  // Refs untuk akses snapshot terkini di dalam listener asinkron
+  const stateRef = useRef({
+    profile,
+    moments,
+    records,
+    milestones,
+    quotes: parentingQuotes,
+    activeJournalId,
+  });
+  stateRef.current = {
+    profile,
+    moments,
+    records,
+    milestones,
+    quotes: parentingQuotes,
+    activeJournalId,
+  };
+
+  const cloudUnsubRef = useRef<(() => void) | null>(null);
+  const isFlushingQueueRef = useRef(false);
+  const hasPendingProfileSyncRef = useRef(false);
+
+  const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
-    }, 4000);
-  };
+    }, 4500);
+  }, []);
 
-  // Listen to Google Auth State
+  const refreshPendingOfflineCount = useCallback(async () => {
+    const queued = await loadOfflineMutations();
+    setPendingOfflineCount(queued.length);
+    const hasPendingProfile = queued.some((item) => item.kind === 'profile:update');
+    hasPendingProfileSyncRef.current = hasPendingProfile;
+    setIsProfilePendingSync(hasPendingProfile);
+  }, []);
+
+  // 1. Validasi Koneksi Firestore ("salma-anak-kami") & Pemulihan IndexedDB saat Aplikasi Boot
   useEffect(() => {
-    const unsubscribe = initAuth(
+    void testFirestoreConnection();
+
+    void (async () => {
+      const queued = await loadOfflineMutations();
+      const hasPendingProfile = queued.some((item) => item.kind === 'profile:update');
+      hasPendingProfileSyncRef.current = hasPendingProfile;
+      setIsProfilePendingSync(hasPendingProfile);
+      setPendingOfflineCount(queued.length);
+
+      const idbSnapshot = await hydrateStateFromIndexedDb();
+      if (idbSnapshot.profile && (hasPendingProfile || (typeof navigator !== 'undefined' && !navigator.onLine))) {
+        setProfile(idbSnapshot.profile);
+      } else if (idbSnapshot.profile && !localStorage.getItem(OFFLINE_STORAGE_KEYS.PROFILE)) {
+        setProfile(idbSnapshot.profile);
+      }
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (idbSnapshot.moments?.length) setMoments(idbSnapshot.moments);
+        if (idbSnapshot.records?.length) setRecords(idbSnapshot.records);
+        if (idbSnapshot.milestones?.length) setMilestones(idbSnapshot.milestones);
+        if (idbSnapshot.parentingQuotes?.length) setParentingQuotes(idbSnapshot.parentingQuotes);
+      }
+    })();
+  }, []);
+
+  // 2. Pengosongan Antrean Lokal Otomatis ke Cloudinary & Firestore saat Koneksi Merespons
+  const flushPendingOfflineQueue = useCallback(async () => {
+    if (isFlushingQueueRef.current) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+    const queued = await loadOfflineMutations();
+    if (queued.length === 0) {
+      setPendingOfflineCount(0);
+      hasPendingProfileSyncRef.current = false;
+      setIsProfilePendingSync(false);
+      return;
+    }
+
+    isFlushingQueueRef.current = true;
+    setIsFlushingOffline(true);
+    try {
+      const journalId = stateRef.current.activeJournalId || SHARED_SALMA_JOURNAL_ID;
+
+      for (const item of queued) {
+        try {
+          if (item.kind === 'profile:update') {
+            const p = item.payload as ChildProfile;
+            const upgradedProfile = await syncProfileToFirestore(journalId, p, {
+              timeoutMs: 10_000,
+            });
+            setProfile(upgradedProfile);
+            await persistLocalStateAsync(OFFLINE_STORAGE_KEYS.PROFILE, upgradedProfile);
+            void pushFamilyMutation('profile:update', upgradedProfile);
+          } else if (item.kind === 'moment:create' || item.kind === 'moment:update') {
+            const m = item.payload as MomentItem;
+            const ext = m.mediaType === 'video' ? 'mp4' : 'jpg';
+            const mediaUrl = m.mediaUrl?.startsWith('data:')
+              ? await uploadChildMediaOnline(m.mediaUrl, `momen_${m.id}.${ext}`, 'moments')
+              : m.mediaUrl;
+            const upgradedMoment: MomentItem = {
+              ...m,
+              mediaUrl,
+              pendingStorageUpload: false,
+            };
+            setMoments((prev) =>
+              prev.map((existing) => (existing.id === upgradedMoment.id ? upgradedMoment : existing))
+            );
+            await pushFamilyMutation(item.kind, upgradedMoment);
+            await syncMomentToFirestore(
+              journalId,
+              stateRef.current.profile,
+              upgradedMoment,
+              item.kind === 'moment:update'
+            );
+          } else if (item.kind === 'growth:create') {
+            const r = item.payload as GrowthRecord;
+            await pushFamilyMutation('growth:create', r);
+            await syncGrowthToFirestore(journalId, stateRef.current.profile, r);
+          } else if (item.kind === 'milestone:toggle') {
+            const ms = item.payload as MilestoneChecklistItem;
+            await pushFamilyMutation('milestone:toggle', ms);
+            await syncMilestoneToFirestore(journalId, stateRef.current.profile, ms);
+          } else if (item.kind === 'quote:update') {
+            const q = item.payload as ParentingQuoteItem;
+            await pushFamilyMutation('quote:update', q);
+            await syncParentingQuoteToFirestore(journalId, stateRef.current.profile, q);
+          }
+
+          await removeOfflineMutation(item.id);
+        } catch (flushErr) {
+          console.warn('Menunda sinkronisasi item lokal ke siklus berikutnya:', flushErr);
+        }
+      }
+    } finally {
+      isFlushingQueueRef.current = false;
+      setIsFlushingOffline(false);
+      const remaining = await loadOfflineMutations();
+      const stillPendingProfile = remaining.some((item) => item.kind === 'profile:update');
+      hasPendingProfileSyncRef.current = stillPendingProfile;
+      setIsProfilePendingSync(stillPendingProfile);
+      setPendingOfflineCount(remaining.length);
+      if (remaining.length === 0) {
+        showToast('Sinkronisasi berhasil! Data lokal telah tersimpan di Cloudinary & Firestore.');
+      }
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    const onReconnectOrVisible = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        void flushPendingOfflineQueue();
+      }
+    };
+    window.addEventListener('online', onReconnectOrVisible);
+    document.addEventListener('visibilitychange', onReconnectOrVisible);
+    return () => {
+      window.removeEventListener('online', onReconnectOrVisible);
+      document.removeEventListener('visibilitychange', onReconnectOrVisible);
+    };
+  }, [flushPendingOfflineQueue]);
+
+  // Retry otomatis berkala saat ada data lokal yang masih menunggu sinkronisasi Cloud
+  useEffect(() => {
+    if (pendingOfflineCount === 0) return;
+    const retryTimer = setInterval(() => {
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        void flushPendingOfflineQueue();
+      }
+    }, 20_000);
+    return () => clearInterval(retryTimer);
+  }, [pendingOfflineCount, flushPendingOfflineQueue]);
+
+  // 3. Langganan Real-Time Langsung ke Cloud Firestore ("salma-anak-kami") Sejak Aplikasi Dibuka
+  //    HP Ayah & HP Bunda otomatis terhubung ke dokumen bersama tanpa perlu pairing manual!
+  const attachCloudFirestoreListeners = useCallback(
+    (journalId: string) => {
+      if (cloudUnsubRef.current) {
+        cloudUnsubRef.current();
+        cloudUnsubRef.current = null;
+      }
+
+      const unsub = subscribeFamilyCloudJournal(
+        journalId,
+        {
+          profile: stateRef.current.profile,
+          moments: stateRef.current.moments,
+          records: stateRef.current.records,
+          milestones: stateRef.current.milestones,
+          quotes: stateRef.current.quotes,
+        },
+        {
+          onProfile: (cloudProfile, isFromPartner) => {
+            if (hasPendingProfileSyncRef.current && !isFromPartner) {
+              return;
+            }
+            setProfile((prev) => ({ ...prev, ...cloudProfile }));
+            persistLocalState(OFFLINE_STORAGE_KEYS.PROFILE, cloudProfile);
+            void pushFamilyMutation('cloud:reconcile', { profile: cloudProfile });
+            if (isFromPartner) {
+              showToast(`Biodata ${cloudProfile.nickname} otomatis ter-update dari HP pasangan!`);
+            }
+          },
+          onMoments: (cloudMoments, isFromPartner) => {
+            if (cloudMoments.length > 0) {
+              setMoments(cloudMoments);
+              setSelectedMoment((curr) =>
+                curr ? cloudMoments.find((m) => m.id === curr.id) || curr : null
+              );
+              persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, cloudMoments);
+              void pushFamilyMutation('cloud:reconcile', { moments: cloudMoments });
+              if (isFromPartner) {
+                showToast('Foto/video atau catatan baru masuk otomatis dari HP pasangan!');
+              }
+            }
+          },
+          onRecords: (cloudRecords, isFromPartner) => {
+            if (cloudRecords.length > 0) {
+              setRecords(cloudRecords);
+              persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, cloudRecords);
+              void pushFamilyMutation('cloud:reconcile', { records: cloudRecords });
+              if (isFromPartner) {
+                showToast('Catatan tinggi/berat badan Salma otomatis ter-update secara real-time!');
+              }
+            }
+          },
+          onMilestones: (cloudMilestones) => {
+            if (cloudMilestones.length > 0) {
+              setMilestones(cloudMilestones);
+              persistLocalState(OFFLINE_STORAGE_KEYS.MILESTONES, cloudMilestones);
+              void pushFamilyMutation('cloud:reconcile', { milestones: cloudMilestones });
+            }
+          },
+          onQuotes: (cloudQuotes) => {
+            if (cloudQuotes.length > 0) {
+              setParentingQuotes(cloudQuotes);
+              persistLocalState(OFFLINE_STORAGE_KEYS.PARENTING_QUOTES, cloudQuotes);
+              void pushFamilyMutation('cloud:reconcile', { parentingQuotes: cloudQuotes });
+            }
+          },
+        }
+      );
+
+      cloudUnsubRef.current = unsub;
+    },
+    [showToast]
+  );
+
+  useEffect(() => {
+    attachCloudFirestoreListeners(activeJournalId);
+    return () => {
+      if (cloudUnsubRef.current) {
+        cloudUnsubRef.current();
+        cloudUnsubRef.current = null;
+      }
+    };
+  }, [activeJournalId, attachCloudFirestoreListeners]);
+
+  // 4. Sinkronisasi Pendamping Real-Time WebSocket Lokal / Server
+  useEffect(() => {
+    const disconnect = connectRealtimeFamilySync({
+      onFullState: (state) => {
+        if (state.profile && !hasPendingProfileSyncRef.current) {
+          setProfile((prev) => ({ ...prev, ...state.profile }));
+          persistLocalState(OFFLINE_STORAGE_KEYS.PROFILE, state.profile);
+        }
+        if (Array.isArray(state.moments) && state.moments.length > 0) {
+          setMoments(state.moments);
+          persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, state.moments);
+        }
+        if (Array.isArray(state.records) && state.records.length > 0) {
+          setRecords(state.records);
+          persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, state.records);
+        }
+        if (Array.isArray(state.milestones) && state.milestones.length > 0) {
+          setMilestones(state.milestones);
+          persistLocalState(OFFLINE_STORAGE_KEYS.MILESTONES, state.milestones);
+        }
+        if (Array.isArray(state.parentingQuotes) && state.parentingQuotes.length > 0) {
+          setParentingQuotes(state.parentingQuotes);
+          persistLocalState(OFFLINE_STORAGE_KEYS.PARENTING_QUOTES, state.parentingQuotes);
+        }
+      },
+      onProfileUpdated: (nextProfile, isFromOtherDevice) => {
+        if (hasPendingProfileSyncRef.current && !isFromOtherDevice) {
+          return;
+        }
+        setProfile((prev) => ({ ...prev, ...nextProfile }));
+        persistLocalState(OFFLINE_STORAGE_KEYS.PROFILE, nextProfile);
+      },
+      onMomentCreated: (incomingMoment) => {
+        setMoments((prev) => {
+          const exists = prev.some((m) => m.id === incomingMoment.id);
+          const next = exists
+            ? prev.map((m) => (m.id === incomingMoment.id ? incomingMoment : m))
+            : [incomingMoment, ...prev];
+          persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, next);
+          return next;
+        });
+      },
+      onMomentUpdated: (updatedMoment) => {
+        setMoments((prev) => {
+          const exists = prev.some((m) => m.id === updatedMoment.id);
+          const next = exists
+            ? prev.map((m) => (m.id === updatedMoment.id ? updatedMoment : m))
+            : [updatedMoment, ...prev];
+          persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, next);
+          return next;
+        });
+        setSelectedMoment((curr) => (curr && curr.id === updatedMoment.id ? updatedMoment : curr));
+      },
+      onGrowthCreated: (incomingRecord) => {
+        setRecords((prev) => {
+          const existingIdx = prev.findIndex(
+            (r) =>
+              r.id === incomingRecord.id ||
+              (Boolean(incomingRecord.sourceMomentId) &&
+                r.sourceMomentId === incomingRecord.sourceMomentId)
+          );
+          const next =
+            existingIdx >= 0
+              ? prev.map((r, i) => (i === existingIdx ? incomingRecord : r))
+              : [...prev, incomingRecord];
+          persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, next);
+          return next;
+        });
+      },
+      onMilestoneToggled: (incomingMilestone) => {
+        setMilestones((prev) => {
+          const next = prev.map((m) => (m.id === incomingMilestone.id ? incomingMilestone : m));
+          persistLocalState(OFFLINE_STORAGE_KEYS.MILESTONES, next);
+          return next;
+        });
+      },
+      onQuoteUpdated: (incomingQuote) => {
+        setParentingQuotes((prev) => {
+          const exists = prev.some((q) => q.id === incomingQuote.id);
+          const next = exists
+            ? prev.map((q) => (q.id === incomingQuote.id ? incomingQuote : q))
+            : [...prev, incomingQuote];
+          persistLocalState(OFFLINE_STORAGE_KEYS.PARENTING_QUOTES, next);
+          return next;
+        });
+      },
+    });
+
+    return () => {
+      disconnect();
+    };
+  }, []);
+
+  // 5. Pantau Status Login Google Opsional (untuk Cadangan Google Drive)
+  useEffect(() => {
+    const unsubscribeAuth = initAuth(
       async (user, token) => {
         setCurrentUser(user);
         if (token) {
@@ -126,6 +498,7 @@ export default function App() {
           const quota = await fetchDriveQuota(token);
           if (quota) setDriveQuota(quota);
         }
+        await flushPendingOfflineQueue();
       },
       () => {
         setCurrentUser(null);
@@ -133,46 +506,53 @@ export default function App() {
         setDriveQuota(null);
       }
     );
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, []);
 
-  // Sync to Storage on State Changes
+    return () => {
+      if (unsubscribeAuth) unsubscribeAuth();
+    };
+  }, [flushPendingOfflineQueue]);
+
+  // 6. Simpan Setiap Perubahan State ke localStorage & IndexedDB (Offline Fallback Instan)
   useEffect(() => {
-    saveToStorage(STORAGE_KEYS.PROFILE, profile);
+    persistLocalState(OFFLINE_STORAGE_KEYS.PROFILE, profile);
   }, [profile]);
 
   useEffect(() => {
-    saveToStorage(STORAGE_KEYS.MOMENTS, moments);
+    persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, moments);
   }, [moments]);
 
   useEffect(() => {
-    saveToStorage(STORAGE_KEYS.GROWTH_RECORDS, records);
+    persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, records);
   }, [records]);
 
   useEffect(() => {
-    saveToStorage(STORAGE_KEYS.MILESTONES, milestones);
+    persistLocalState(OFFLINE_STORAGE_KEYS.MILESTONES, milestones);
   }, [milestones]);
+
+  useEffect(() => {
+    persistLocalState(OFFLINE_STORAGE_KEYS.PARENTING_QUOTES, parentingQuotes);
+  }, [parentingQuotes]);
 
   // Derived calculations
   const latestStats = getLatestMeasurements(profile, moments, records);
 
-  // Handlers for Google Drive connection
+  // Handlers for Google Auth & Cloud Family Linking
   const handleConnectGoogle = async () => {
     setIsConnectingGoogle(true);
     try {
       const res = await googleSignIn();
       if (res) {
         setCurrentUser(res.user);
-        setAccessToken(res.accessToken);
-        const quota = await fetchDriveQuota(res.accessToken);
-        if (quota) setDriveQuota(quota);
-        showToast(`Akun Google (${res.user.email}) berhasil terhubung ke Google Drive!`);
+        if (res.accessToken) {
+          setAccessToken(res.accessToken);
+          const quota = await fetchDriveQuota(res.accessToken);
+          if (quota) setDriveQuota(quota);
+        }
+        showToast(`Akun Google (${res.user.email}) berhasil terhubung!`);
       }
     } catch (err: any) {
       console.error('Google Sign-In failed:', err);
-      showToast(err.message || 'Gagal menghubungkan ke Google Drive');
+      showToast(err.message || 'Gagal menghubungkan ke Akun Google');
     } finally {
       setIsConnectingGoogle(false);
     }
@@ -184,6 +564,17 @@ export default function App() {
     setAccessToken(null);
     setDriveQuota(null);
     showToast('Akun Google berhasil diputuskan.');
+  };
+
+  const handleJoinFamilyJournal = async (targetJournalCode: string) => {
+    try {
+      const joinedId = await joinPartnerCloudJournal(targetJournalCode);
+      setActiveJournalId(joinedId);
+      showToast(`Berhasil terhubung ke Jurnal Cloud Keluarga (${joinedId})!`);
+    } catch (err: any) {
+      console.error('Gagal menggabungkan Jurnal Cloud:', err);
+      showToast('Gagal menautkan ID Jurnal Cloud.');
+    }
   };
 
   // Upload & Edit Handlers
@@ -208,10 +599,25 @@ export default function App() {
 
   const handleSaveNewMoment = (newMoment: MomentItem) => {
     setMoments((prevMoments) => {
-      const updatedMoments = [newMoment, ...prevMoments];
-      saveToStorage(STORAGE_KEYS.MOMENTS, updatedMoments);
+      const exists = prevMoments.some((m) => m.id === newMoment.id);
+      const updatedMoments = exists ? prevMoments : [newMoment, ...prevMoments];
+      persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, updatedMoments);
       return updatedMoments;
     });
+
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      void enqueueOfflineMutation('moment:create', newMoment, `moment_create_${newMoment.id}`).then(
+        refreshPendingOfflineCount
+      );
+    } else {
+      void pushFamilyMutation('moment:create', newMoment);
+      void syncMomentToFirestore(activeJournalId, profile, newMoment, false).catch(() =>
+        enqueueOfflineMutation('moment:create', newMoment, `moment_create_${newMoment.id}`).then(
+          refreshPendingOfflineCount
+        )
+      );
+    }
 
     if (newMoment.weightKg || newMoment.heightCm) {
       const birth = new Date(profile.birthDate);
@@ -233,24 +639,55 @@ export default function App() {
       };
       setRecords((prev) => {
         const updatedRecords = [...prev, newRecord];
-        saveToStorage(STORAGE_KEYS.GROWTH_RECORDS, updatedRecords);
+        persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, updatedRecords);
         return updatedRecords;
       });
+
+      if (isOffline) {
+        void enqueueOfflineMutation('growth:create', newRecord, `growth_${newRecord.id}`).then(
+          refreshPendingOfflineCount
+        );
+      } else {
+        void pushFamilyMutation('growth:create', newRecord);
+        void syncGrowthToFirestore(activeJournalId, profile, newRecord).catch(() =>
+          enqueueOfflineMutation('growth:create', newRecord, `growth_${newRecord.id}`).then(
+            refreshPendingOfflineCount
+          )
+        );
+      }
     }
 
-    if (newMoment.googleDriveSynced) {
-      showToast(`Momen "${newMoment.title}" tersimpan langsung ke Google Drive!`);
-    } else {
-      showToast(`Momen "${newMoment.title}" berhasil disimpan di penyimpanan lokal.`);
-    }
+    showToast(
+      isOffline
+        ? `Momen "${newMoment.title}" tersimpan offline & akan diunggah ke Cloudinary + Firestore saat online!`
+        : `Momen "${newMoment.title}" tersimpan ke Cloudinary & Firestore (sinkron otomatis ke HP Ayah & Bunda)!`
+    );
   };
 
   const handleUpdateMoment = (updatedMoment: MomentItem) => {
     setMoments((prevMoments) => {
       const next = prevMoments.map((m) => (m.id === updatedMoment.id ? updatedMoment : m));
-      saveToStorage(STORAGE_KEYS.MOMENTS, next);
+      persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, next);
       return next;
     });
+
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      void enqueueOfflineMutation(
+        'moment:update',
+        updatedMoment,
+        `moment_update_${updatedMoment.id}`
+      ).then(refreshPendingOfflineCount);
+    } else {
+      void pushFamilyMutation('moment:update', updatedMoment);
+      void syncMomentToFirestore(activeJournalId, profile, updatedMoment, true).catch(() =>
+        enqueueOfflineMutation(
+          'moment:update',
+          updatedMoment,
+          `moment_update_${updatedMoment.id}`
+        ).then(refreshPendingOfflineCount)
+      );
+    }
 
     if (updatedMoment.weightKg || updatedMoment.heightCm) {
       const birth = new Date(profile.birthDate);
@@ -260,48 +697,61 @@ export default function App() {
         (mDate.getFullYear() - birth.getFullYear()) * 12 + (mDate.getMonth() - birth.getMonth())
       );
 
+      const existingRecord = records.find((r) => r.sourceMomentId === updatedMoment.id);
+      const syncedRecord: GrowthRecord = existingRecord
+        ? {
+            ...existingRecord,
+            date: updatedMoment.date,
+            ageMonths: monthsDiff,
+            weightKg: updatedMoment.weightKg || existingRecord.weightKg,
+            heightCm: updatedMoment.heightCm || existingRecord.heightCm,
+            headCircumferenceCm:
+              updatedMoment.headCircumferenceCm ?? existingRecord.headCircumferenceCm,
+            notes: updatedMoment.title,
+          }
+        : {
+            id: `gr_${Date.now()}`,
+            date: updatedMoment.date,
+            ageMonths: monthsDiff,
+            weightKg: updatedMoment.weightKg || latestStats.weightKg,
+            heightCm: updatedMoment.heightCm || latestStats.heightCm,
+            headCircumferenceCm: updatedMoment.headCircumferenceCm,
+            notes: updatedMoment.title,
+            sourceMomentId: updatedMoment.id,
+          };
+
       setRecords((prev) => {
-        const existingIdx = prev.findIndex((r) => r.sourceMomentId === updatedMoment.id);
-        let updatedRecords: GrowthRecord[];
-        if (existingIdx >= 0) {
-          updatedRecords = prev.map((r, i) =>
-            i === existingIdx
-              ? {
-                  ...r,
-                  date: updatedMoment.date,
-                  ageMonths: monthsDiff,
-                  weightKg: updatedMoment.weightKg || r.weightKg,
-                  heightCm: updatedMoment.heightCm || r.heightCm,
-                  headCircumferenceCm: updatedMoment.headCircumferenceCm ?? r.headCircumferenceCm,
-                  notes: updatedMoment.title,
-                }
-              : r
-          );
-        } else {
-          updatedRecords = [
-            ...prev,
-            {
-              id: `gr_${Date.now()}`,
-              date: updatedMoment.date,
-              ageMonths: monthsDiff,
-              weightKg: updatedMoment.weightKg || latestStats.weightKg,
-              heightCm: updatedMoment.heightCm || latestStats.heightCm,
-              headCircumferenceCm: updatedMoment.headCircumferenceCm,
-              notes: updatedMoment.title,
-              sourceMomentId: updatedMoment.id,
-            },
-          ];
-        }
-        saveToStorage(STORAGE_KEYS.GROWTH_RECORDS, updatedRecords);
+        const idx = prev.findIndex((r) => r.id === syncedRecord.id);
+        const updatedRecords =
+          idx >= 0 ? prev.map((r, i) => (i === idx ? syncedRecord : r)) : [...prev, syncedRecord];
+        persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, updatedRecords);
         return updatedRecords;
       });
+
+      if (isOffline) {
+        void enqueueOfflineMutation('growth:create', syncedRecord, `growth_${syncedRecord.id}`).then(
+          refreshPendingOfflineCount
+        );
+      } else {
+        void pushFamilyMutation('growth:create', syncedRecord);
+        void syncGrowthToFirestore(activeJournalId, profile, syncedRecord).catch(() =>
+          enqueueOfflineMutation('growth:create', syncedRecord, `growth_${syncedRecord.id}`).then(
+            refreshPendingOfflineCount
+          )
+        );
+      }
     }
 
     setEditingMoment(null);
-    showToast(`Perubahan momen "${updatedMoment.title}" berhasil disimpan!`);
+    showToast(
+      isOffline
+        ? `Perubahan momen "${updatedMoment.title}" tersimpan offline!`
+        : `Perubahan momen "${updatedMoment.title}" langsung tersinkronisasi ke HP Ayah & Bunda!`
+    );
   };
 
   const handleToggleMilestone = (milestoneId: string) => {
+    let toggledTarget: MilestoneChecklistItem | null = null;
     setMilestones((prev) => {
       const updated = prev.map((m) => {
         if (m.id === milestoneId) {
@@ -309,17 +759,39 @@ export default function App() {
           if (nextState) {
             showToast(`Selamat! Milestone "${m.title}" berhasil dicapai.`);
           }
-          return {
+          toggledTarget = {
             ...m,
             completed: nextState,
             completedDate: nextState ? new Date().toISOString().slice(0, 10) : undefined,
           };
+          return toggledTarget;
         }
         return m;
       });
-      saveToStorage(STORAGE_KEYS.MILESTONES, updated);
+      persistLocalState(OFFLINE_STORAGE_KEYS.MILESTONES, updated);
       return updated;
     });
+
+    if (toggledTarget) {
+      const targetSnapshot = toggledTarget as MilestoneChecklistItem;
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      if (isOffline) {
+        void enqueueOfflineMutation(
+          'milestone:toggle',
+          targetSnapshot,
+          `milestone_${targetSnapshot.id}`
+        ).then(refreshPendingOfflineCount);
+      } else {
+        void pushFamilyMutation('milestone:toggle', targetSnapshot);
+        void syncMilestoneToFirestore(activeJournalId, profile, targetSnapshot).catch(() =>
+          enqueueOfflineMutation(
+            'milestone:toggle',
+            targetSnapshot,
+            `milestone_${targetSnapshot.id}`
+          ).then(refreshPendingOfflineCount)
+        );
+      }
+    }
   };
 
   const handleSaveQuickGrowth = (data: {
@@ -348,14 +820,98 @@ export default function App() {
 
     setRecords((prev) => {
       const updatedRecords = [...prev, newRecord];
-      saveToStorage(STORAGE_KEYS.GROWTH_RECORDS, updatedRecords);
+      persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, updatedRecords);
       return updatedRecords;
     });
+
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      void enqueueOfflineMutation('growth:create', newRecord, `growth_${newRecord.id}`).then(
+        refreshPendingOfflineCount
+      );
+    } else {
+      void pushFamilyMutation('growth:create', newRecord);
+      void syncGrowthToFirestore(activeJournalId, profile, newRecord).catch(() =>
+        enqueueOfflineMutation('growth:create', newRecord, `growth_${newRecord.id}`).then(
+          refreshPendingOfflineCount
+        )
+      );
+    }
+
     showToast(
-      `Data pertumbuhan ${profile.nickname} (${data.weightKg ? data.weightKg + ' kg' : ''} ${
-        data.heightCm ? data.heightCm + ' cm' : ''
-      }) berhasil dicatat!`
+      isOffline
+        ? `Data pertumbuhan ${profile.nickname} tersimpan offline & siap sinkron saat online!`
+        : `Data BB/TB ${profile.nickname} (${data.weightKg ? data.weightKg + ' kg' : ''} ${
+            data.heightCm ? data.heightCm + ' cm' : ''
+          }) tersimpan ke Firestore secara real-time!`
     );
+  };
+
+  const handleSaveProfileOnline = async (
+    updated: ChildProfile
+  ): Promise<{ syncedOnline: boolean }> => {
+    // 1. Simpan otomatis terlebih dahulu ke IndexedDB & LocalStorage agar UI tidak menggantung
+    setProfile(updated);
+    await persistLocalStateAsync(OFFLINE_STORAGE_KEYS.PROFILE, updated);
+
+    // 2. Try-catch + timeout maksimal 5 detik untuk proses upload Cloudinary & simpan Firestore
+    try {
+      const syncedProfile = await syncProfileToFirestore(activeJournalId, updated, {
+        timeoutMs: 5000,
+      });
+
+      setProfile(syncedProfile);
+      await persistLocalStateAsync(OFFLINE_STORAGE_KEYS.PROFILE, syncedProfile);
+      await removeOfflineMutation('profile_latest');
+      hasPendingProfileSyncRef.current = false;
+      setIsProfilePendingSync(false);
+      await refreshPendingOfflineCount();
+
+      void pushFamilyMutation('profile:update', syncedProfile);
+      showToast(
+        'Biodata Salma, Ayah & Bunda langsung ter-update otomatis di HP Ayah & HP Bunda!'
+      );
+      return { syncedOnline: true };
+    } catch (err) {
+      console.warn(
+        'Koneksi Cloud lambat/gagal (batas 5 detik), biodata disimpan lokal menunggu sinkronisasi:',
+        err
+      );
+      hasPendingProfileSyncRef.current = true;
+      setIsProfilePendingSync(true);
+      await enqueueOfflineMutation('profile:update', updated, 'profile_latest');
+      await refreshPendingOfflineCount();
+      showToast('Tersimpan Lokal (Menunggu Sinkronisasi)');
+      return { syncedOnline: false };
+    }
+  };
+
+  const handleUpdateParentingQuote = (updatedQuote: ParentingQuoteItem) => {
+    setParentingQuotes((prev) => {
+      const exists = prev.some((q) => q.id === updatedQuote.id);
+      const next = exists
+        ? prev.map((q) => (q.id === updatedQuote.id ? updatedQuote : q))
+        : [...prev, updatedQuote];
+      persistLocalState(OFFLINE_STORAGE_KEYS.PARENTING_QUOTES, next);
+      return next;
+    });
+
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      void enqueueOfflineMutation('quote:update', updatedQuote, `quote_${updatedQuote.id}`).then(
+        refreshPendingOfflineCount
+      );
+      showToast('Mutiara Parenting disimpan offline & otomatis sinkron saat online!');
+      return;
+    }
+
+    void pushFamilyMutation('quote:update', updatedQuote);
+    void syncParentingQuoteToFirestore(activeJournalId, profile, updatedQuote).catch(() =>
+      enqueueOfflineMutation('quote:update', updatedQuote, `quote_${updatedQuote.id}`).then(
+        refreshPendingOfflineCount
+      )
+    );
+    showToast('Mutiara Parenting berhasil diperbarui & disinkronkan ke semua HP!');
   };
 
   return (
@@ -383,8 +939,11 @@ export default function App() {
 
       {/* Main Content Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-5 space-y-6">
-        {/* Bar Pasang di Layar + Mutiara Parenting 7 Hari (Pesan Berjalan & Mode Baca) */}
-        <ParentingQuoteBar />
+        {/* Bar Pasang di Layar + Mutiara Parenting Otomatis (Sinkron Real-Time via Firestore) */}
+        <ParentingQuoteBar
+          quotes={parentingQuotes}
+          onUpdateQuote={handleUpdateParentingQuote}
+        />
 
         {/* Tab 1: Overview (Beranda Utama) */}
         {activeTab === 'overview' && (
@@ -393,6 +952,8 @@ export default function App() {
             <ChildHeroProfile
               profile={profile}
               latestStats={latestStats}
+              isPendingLocalSync={isProfilePendingSync}
+              onRetrySync={() => void flushPendingOfflineQueue()}
               onOpenUpload={handleOpenUpload}
               onEditProfile={() => setIsEditProfileOpen(true)}
               onOpenQuickGrowth={() => setIsQuickGrowthOpen(true)}
@@ -446,12 +1007,29 @@ export default function App() {
 
                       <div className="h-full bg-white p-2.5 sm:p-3.5 pb-3.5 rounded-3xl border border-slate-200/90 shadow-sm group-hover:shadow-md transition-all flex flex-col justify-between">
                         <div className="aspect-[4/5] rounded-2xl overflow-hidden bg-slate-100 relative mb-2.5">
-                          <img
-                            src={moment.mediaUrl}
-                            alt={moment.title}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                            loading="lazy"
-                          />
+                          {moment.mediaType === 'video' ? (
+                            <video
+                              src={moment.mediaUrl}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <img
+                              src={moment.mediaUrl}
+                              alt={moment.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              loading="lazy"
+                            />
+                          )}
+
+                          {moment.mediaType === 'video' && (
+                            <div className="absolute top-2 left-2 w-6 h-6 rounded-lg bg-black/60 text-white flex items-center justify-center backdrop-blur-xs">
+                              <Video className="w-3 h-3" />
+                            </div>
+                          )}
+
                           {moment.weightKg && (
                             <div className="absolute top-2 right-2 bg-slate-900/85 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
                               {moment.weightKg} kg
@@ -502,7 +1080,7 @@ export default function App() {
                   );
                 })}
 
-                {/* Dashed "+ Tambah Momen" Card (Matching Reference Screenshot) */}
+                {/* Dashed "+ Tambah Momen" Card */}
                 <div className="pt-3">
                   <button
                     type="button"
@@ -635,12 +1213,12 @@ export default function App() {
             className="text-sky-700 hover:underline flex items-center gap-1 cursor-pointer"
           >
             <Cloud className="w-3.5 h-3.5" />
-            <span>Pengaturan Cloud Drive</span>
+            <span>Pengaturan Cloud Firestore &amp; Cloudinary</span>
           </button>
         </div>
       </main>
 
-      {/* Floating Transparent FAQ & Konsultasi dr. AI */}
+      {/* Floating Transparent FAQ & Konsultasi dr. AI (Google Search + Halodoc/IDAI/WHO) */}
       <FloatingDoctorFAQ profile={profile} latestStats={latestStats} />
 
       {/* Floating Bottom Navigation Bar for Mobile */}
@@ -692,7 +1270,7 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Pop-up Modal Pengaturan Penyimpanan */}
+      {/* Pop-up Modal Pengaturan Cloud Firestore ("salma-anak-kami") & Cloudinary ("la3st6qh") */}
       <StorageModal
         isOpen={isStorageModalOpen}
         onClose={() => setIsStorageModalOpen(false)}
@@ -704,6 +1282,8 @@ export default function App() {
         onConnectGoogle={handleConnectGoogle}
         onDisconnectGoogle={handleDisconnectGoogle}
         childName={profile.nickname}
+        activeJournalId={activeJournalId}
+        onJoinFamilyJournal={handleJoinFamilyJournal}
       />
 
       {/* Context Menu / Long Press Pop-up / Mobile Bottom Sheet */}
@@ -773,11 +1353,7 @@ export default function App() {
         isOpen={isEditProfileOpen}
         profile={profile}
         onClose={() => setIsEditProfileOpen(false)}
-        onSaveProfile={(updated) => {
-          setProfile(updated);
-          saveToStorage(STORAGE_KEYS.PROFILE, updated);
-          showToast('Biodata anak serta info Ayah & Ibu berhasil diperbarui!');
-        }}
+        onSaveProfile={handleSaveProfileOnline}
       />
 
       {/* Modal Input Cepat Pertumbuhan (BB, TB, LK Stepper & Posyandu) */}
@@ -791,8 +1367,12 @@ export default function App() {
         onSave={handleSaveQuickGrowth}
       />
 
-      {/* Indikator Mode Offline PWA */}
-      <OfflineIndicator />
+      {/* Indikator Mode Offline PWA & Antrean Sinkronisasi Cloud */}
+      <OfflineIndicator
+        pendingCount={pendingOfflineCount}
+        isSyncing={isFlushingOffline}
+        onRetrySync={() => void flushPendingOfflineQueue()}
+      />
 
       {/* Notification Toast */}
       {toastMessage && (

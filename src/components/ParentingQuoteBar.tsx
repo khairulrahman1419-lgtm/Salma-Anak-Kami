@@ -1,94 +1,73 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   BookOpen,
   ScrollText,
   Smartphone,
-  ChevronLeft,
-  ChevronRight,
   Quote,
   Share,
   PlusSquare,
   MoreVertical,
   X,
   CheckCircle2,
+  Edit2,
+  Save,
 } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall.ts';
+import type { ParentingQuoteItem } from '../types/index.ts';
+import { INITIAL_PARENTING_QUOTES } from '../utils/initialFallback.ts';
 
-interface DailyQuoteItem {
-  dayIndex: number; // 0 = Senin ... 6 = Minggu
-  shortDay: string;
-  fullDay: string;
-  quote: string;
+interface ParentingQuoteBarProps {
+  quotes?: ParentingQuoteItem[];
+  onUpdateQuote?: (updated: ParentingQuoteItem) => void;
 }
 
-const WEEKLY_PARENTING_QUOTES: DailyQuoteItem[] = [
-  {
-    dayIndex: 0,
-    shortDay: 'Sen',
-    fullDay: 'Senin',
-    quote:
-      'Kehadiran seorang anak adalah anugerah terindah dari Tuhan yang membawa rezeki serta kebahagiaan yang tidak ternilai harganya ke dalam rumah tangga.',
-  },
-  {
-    dayIndex: 1,
-    shortDay: 'Sel',
-    fullDay: 'Selasa',
-    quote:
-      'Setiap lelah dalam mengurus dan mendidik anak bernilai ibadah di sisi-Nya, karena kesabaran orang tua adalah ladang pahala yang luar biasa.',
-  },
-  {
-    dayIndex: 2,
-    shortDay: 'Rab',
-    fullDay: 'Rabu',
-    quote:
-      'Tetaplah semangat dan ikhlas dalam merawat buah hati, sebab setiap keringat dan pengorbanan hari ini akan menjadi investasi kebaikan di masa depan.',
-  },
-  {
-    dayIndex: 3,
-    shortDay: 'Kam',
-    fullDay: 'Kamis',
-    quote:
-      'Menemani tumbuh kembang anak dengan penuh cinta kasih bukan sekadar tugas, melainkan bentuk syukur atas amanah mulia yang dipercayakan kepada kita.',
-  },
-  {
-    dayIndex: 4,
-    shortDay: 'Jum',
-    fullDay: 'Jumat',
-    quote:
-      'Pelukan hangat dan senyuman anak di tengah penatnya hari adalah pengingat bahwa Allah telah menitipkan surga kecil di dalam keluarga kita.',
-  },
-  {
-    dayIndex: 5,
-    shortDay: 'Sab',
-    fullDay: 'Sabtu',
-    quote:
-      'Jadikan setiap detik membersamai anak sebagai momen berharga untuk menanamkan kebaikan sekaligus mendekatkan diri kepada Sang Pencipta.',
-  },
-  {
-    dayIndex: 6,
-    shortDay: 'Min',
-    fullDay: 'Minggu',
-    quote:
-      'Tidak ada usaha mendidik anak yang sia-sia; setiap doa dan didikan tulus adalah bentuk ketaatan serta ibadah terbaik seorang orang tua.',
-  },
-];
-
-function getTodayMondayZeroIndex(): number {
+function getAutomaticDailyQuoteIndex(totalQuotes: number): number {
+  const safeCount = Math.max(1, totalQuotes);
   const jsDay = new Date().getDay(); // 0 = Sunday, 1 = Monday ... 6 = Saturday
-  return jsDay === 0 ? 6 : jsDay - 1;
+  const zeroBasedDay = jsDay === 0 ? 6 : jsDay - 1;
+  return zeroBasedDay % safeCount;
 }
 
-export const ParentingQuoteBar: React.FC = () => {
-  const todayIdx = getTodayMondayZeroIndex();
-  const [selectedDayIdx, setSelectedDayIdx] = useState<number>(todayIdx);
+export const ParentingQuoteBar: React.FC<ParentingQuoteBarProps> = ({
+  quotes,
+  onUpdateQuote,
+}) => {
+  const activeQuotes =
+    quotes && quotes.length > 0
+      ? [...quotes].sort((a, b) => a.orderIndex - b.orderIndex)
+      : INITIAL_PARENTING_QUOTES;
+
+  const [dailyIdx, setDailyIdx] = useState<number>(() =>
+    getAutomaticDailyQuoteIndex(activeQuotes.length)
+  );
   const [mode, setMode] = useState<'marquee' | 'read'>('marquee');
   const [showInstallGuide, setShowInstallGuide] = useState(false);
+  const [isEditingQuote, setIsEditingQuote] = useState(false);
+  const [draftQuoteText, setDraftQuoteText] = useState('');
 
   const { isInstallable, isInstalled, isIOS, isInIframe, install } = usePWAInstall();
 
-  const currentItem = WEEKLY_PARENTING_QUOTES[selectedDayIdx] || WEEKLY_PARENTING_QUOTES[0];
-  const isTodaySelected = selectedDayIdx === todayIdx;
+  // Secara otomatis memperbarui kutipan ketika pergantian hari tanpa menampilkan nama hari
+  useEffect(() => {
+    const syncDailyIndex = () => {
+      const nextIdx = getAutomaticDailyQuoteIndex(activeQuotes.length);
+      setDailyIdx((prev) => (prev !== nextIdx ? nextIdx : prev));
+    };
+
+    syncDailyIndex();
+    const intervalId = setInterval(syncDailyIndex, 60_000);
+    document.addEventListener('visibilitychange', syncDailyIndex);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', syncDailyIndex);
+    };
+  }, [activeQuotes.length]);
+
+  const currentQuoteObj =
+    activeQuotes[dailyIdx] || activeQuotes[0] || INITIAL_PARENTING_QUOTES[0];
+  const currentQuote = currentQuoteObj.text;
 
   const handleInstallClick = async () => {
     if (isInstallable) {
@@ -98,29 +77,36 @@ export const ParentingQuoteBar: React.FC = () => {
     setShowInstallGuide(true);
   };
 
-  const handlePrevDay = () => {
-    setSelectedDayIdx((prev) => (prev === 0 ? 6 : prev - 1));
+  const handleStartEdit = () => {
+    setDraftQuoteText(currentQuoteObj.text);
+    setIsEditingQuote(true);
   };
 
-  const handleNextDay = () => {
-    setSelectedDayIdx((prev) => (prev === 6 ? 0 : prev + 1));
+  const handleSaveEditedQuote = () => {
+    const clean = draftQuoteText.trim();
+    if (!clean) return;
+    if (onUpdateQuote) {
+      onUpdateQuote({
+        ...currentQuoteObj,
+        text: clean.slice(0, 600),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    setIsEditingQuote(false);
   };
 
   return (
     <>
       <section
-        aria-label="Mutiara Parenting Mingguan dan Pasang Aplikasi"
+        aria-label="Mutiara Parenting Harian dan Pasang Aplikasi"
         className="bg-gradient-to-r from-[#0F5249] via-[#115E59] to-[#0F5249] text-white rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 shadow-sm border border-emerald-800/60 space-y-2"
       >
-        {/* Top Header Row inside Bar */}
+        {/* Top Header Row inside Bar (Tanpa Label Hari) */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2 min-w-0">
             <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
             <span className="text-xs font-extrabold tracking-tight text-white">
               Mutiara Parenting
-            </span>
-            <span className="text-[10px] font-semibold text-emerald-100/90 bg-white/10 border border-white/15 px-2 py-0.5 rounded-full whitespace-nowrap">
-              {currentItem.fullDay} {isTodaySelected ? '· Hari Ini' : `· Hari ke-${selectedDayIdx + 1}`}
             </span>
           </div>
 
@@ -141,7 +127,10 @@ export const ParentingQuoteBar: React.FC = () => {
             {/* Toggle Pesan Berjalan vs Mode Baca */}
             <button
               type="button"
-              onClick={() => setMode((prev) => (prev === 'marquee' ? 'read' : 'marquee'))}
+              onClick={() => {
+                setIsEditingQuote(false);
+                setMode((prev) => (prev === 'marquee' ? 'read' : 'marquee'));
+              }}
               className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/12 hover:bg-white/20 border border-white/20 text-emerald-50 font-semibold text-[10px] sm:text-[11px] transition-colors cursor-pointer"
             >
               {mode === 'marquee' ? (
@@ -159,100 +148,79 @@ export const ParentingQuoteBar: React.FC = () => {
           </div>
         </div>
 
-        {/* Quote Content Row */}
+        {/* Quote Content Row (Berjalan otomatis setiap hari tanpa menampilkan nama hari) */}
         {mode === 'marquee' ? (
           <div className="flex items-center gap-2.5 bg-black/15 rounded-xl px-3 py-1.5 border border-white/10">
             <Quote className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
             <div
               onClick={() => setMode('read')}
-              title="Ketuk untuk membuka Mode Baca 7 Hari"
+              title="Ketuk untuk membuka Mode Baca"
               className="flex-1 overflow-hidden cursor-pointer"
             >
               <div className="animate-marquee-quote text-xs text-emerald-50/95 font-medium">
-                <span className="pr-14">
-                  “{currentItem.quote}” — Renungan {currentItem.fullDay} (Ketuk untuk Mode Baca 7 Hari)
-                </span>
-                <span className="pr-14" aria-hidden="true">
-                  “{currentItem.quote}” — Renungan {currentItem.fullDay} (Ketuk untuk Mode Baca 7 Hari)
+                <span className="pr-16">“{currentQuote}”</span>
+                <span className="pr-16" aria-hidden="true">
+                  “{currentQuote}”
                 </span>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setMode('read')}
-              className="shrink-0 text-[10px] font-bold text-amber-200 hover:text-white bg-white/10 px-2 py-0.5 rounded-md cursor-pointer"
-            >
-              {currentItem.shortDay}
-            </button>
           </div>
         ) : (
-          <div className="bg-black/15 rounded-xl p-3 sm:p-3.5 border border-white/10 space-y-3 animate-in fade-in duration-150">
-            <div className="flex items-start gap-2.5">
-              <Quote className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
-              <p className="text-xs sm:text-sm text-white/95 leading-relaxed font-medium">
-                “{currentItem.quote}”
-              </p>
-            </div>
-
-            {/* 7-Day Selector Bar (Berulang Setiap Minggu) */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/10">
-              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-                {WEEKLY_PARENTING_QUOTES.map((item) => {
-                  const active = item.dayIndex === selectedDayIdx;
-                  const isToday = item.dayIndex === todayIdx;
-                  return (
-                    <button
-                      key={item.dayIndex}
-                      type="button"
-                      onClick={() => setSelectedDayIdx(item.dayIndex)}
-                      className={`px-2.5 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer relative ${
-                        active
-                          ? 'bg-white text-[#0F5249] shadow-2xs'
-                          : 'bg-white/10 text-emerald-100 hover:bg-white/20'
-                      }`}
-                    >
-                      <span>{item.shortDay}</span>
-                      {isToday && !active && (
-                        <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-amber-300 align-middle" />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="flex items-center gap-1">
-                {!isTodaySelected && (
+          <div className="bg-black/15 rounded-xl p-3.5 sm:p-4 border border-white/10 animate-in fade-in duration-150 space-y-2.5">
+            {isEditingQuote ? (
+              <div className="space-y-2">
+                <textarea
+                  rows={3}
+                  maxLength={600}
+                  value={draftQuoteText}
+                  onChange={(e) => setDraftQuoteText(e.target.value)}
+                  className="w-full rounded-xl bg-white/95 text-slate-900 text-xs sm:text-sm p-2.5 border border-emerald-300 focus:outline-none focus:ring-2 focus:ring-amber-300 resize-none"
+                  placeholder="Tulis kutipan Mutiara Parenting keluarga..."
+                />
+                <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setSelectedDayIdx(todayIdx)}
-                    className="px-2 py-1 rounded-lg bg-amber-300/20 hover:bg-amber-300/30 text-amber-200 text-[10px] font-bold cursor-pointer"
+                    onClick={() => setIsEditingQuote(false)}
+                    className="px-3 py-1 rounded-lg text-[11px] font-semibold text-emerald-100 hover:bg-white/10 cursor-pointer"
                   >
-                    Hari Ini
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveEditedQuote}
+                    className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-amber-300 hover:bg-amber-200 text-slate-900 text-[11px] font-bold cursor-pointer"
+                  >
+                    <Save className="w-3 h-3" />
+                    <span>Simpan &amp; Sinkronkan</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between gap-2.5">
+                <div className="flex items-start gap-2.5 flex-1">
+                  <Quote className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+                  <p className="text-xs sm:text-sm text-white/95 leading-relaxed font-medium">
+                    “{currentQuote}”
+                  </p>
+                </div>
+                {onUpdateQuote && (
+                  <button
+                    type="button"
+                    onClick={handleStartEdit}
+                    title="Ubah kutipan Mutiara Parenting (tersinkronisasi ke HP pasangan)"
+                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-semibold text-emerald-100 transition-colors cursor-pointer"
+                  >
+                    <Edit2 className="w-3 h-3 text-amber-200" />
+                    <span>Ubah</span>
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={handlePrevDay}
-                  aria-label="Hari sebelumnya"
-                  className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center cursor-pointer"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleNextDay}
-                  aria-label="Hari berikutnya"
-                  className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center cursor-pointer"
-                >
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
               </div>
-            </div>
+            )}
           </div>
         )}
       </section>
 
-      {/* Panduan Pasang ke Layar Utama HP (Muncul bila browser butuh panduan manual) */}
+      {/* Panduan Pasang ke Layar Utama HP */}
       {showInstallGuide && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200"
@@ -339,7 +307,7 @@ export const ParentingQuoteBar: React.FC = () => {
             <div className="flex items-center justify-between pt-1">
               <span className="text-[11px] text-emerald-700 font-medium flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Mutiara Parenting tetap tampil setiap hari
+                Mutiara Parenting tersinkronisasi &amp; tampil otomatis setiap hari
               </span>
               <button
                 type="button"

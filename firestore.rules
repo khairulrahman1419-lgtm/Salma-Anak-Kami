@@ -1,0 +1,412 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Master Gate Lookup on Parent Journal
+    function getJournalData(journalId) {
+      return get(/databases/$(database)/documents/journals/$(journalId)).data;
+    }
+
+    function isJournalMember(journalId) {
+      return exists(/databases/$(database)/documents/journals/$(journalId)) && (
+        getJournalData(journalId).ownerId == request.auth.uid ||
+        (getJournalData(journalId).partnerUid != '' && getJournalData(journalId).partnerUid == request.auth.uid)
+      );
+    }
+
+    // Validation Blueprint: FamilyJournal
+    function isValidFamilyJournal(data) {
+      return data.keys().hasAll([
+        'ownerId', 'partnerUid', 'inviteCode', 'name', 'nickname', 'birthDate',
+        'gender', 'bloodType', 'avatarUrl', 'fatherName', 'fatherInfo', 'fatherAvatarUrl',
+        'motherName', 'motherInfo', 'motherAvatarUrl', 'birthWeightKg', 'birthHeightCm',
+        'birthHeadCircumferenceCm', 'specialNotes', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId', 'partnerUid', 'inviteCode', 'name', 'nickname', 'birthDate',
+        'gender', 'bloodType', 'avatarUrl', 'fatherName', 'fatherInfo', 'fatherAvatarUrl',
+        'motherName', 'motherInfo', 'motherAvatarUrl', 'birthWeightKg', 'birthHeightCm',
+        'birthHeadCircumferenceCm', 'specialNotes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.ownerId) &&
+      data.partnerUid is string && data.partnerUid.size() <= 128 &&
+      (data.partnerUid == '' || data.partnerUid.matches('^[a-zA-Z0-9_\\-]+$')) &&
+      data.inviteCode is string && data.inviteCode.size() >= 4 && data.inviteCode.size() <= 32 && data.inviteCode.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+      data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 60 &&
+      data.birthDate is string && data.birthDate.size() == 10 && data.birthDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+      data.gender is string && data.gender.size() >= 4 && data.gender.size() <= 10 && (data.gender == 'male' || data.gender == 'female') &&
+      data.bloodType is string && data.bloodType.size() <= 10 &&
+      data.avatarUrl is string && data.avatarUrl.size() >= 1 && data.avatarUrl.size() <= 2048 &&
+      data.fatherName is string && data.fatherName.size() >= 1 && data.fatherName.size() <= 80 &&
+      data.fatherInfo is string && data.fatherInfo.size() <= 300 &&
+      data.fatherAvatarUrl is string && data.fatherAvatarUrl.size() <= 2048 &&
+      data.motherName is string && data.motherName.size() <= 80 &&
+      data.motherInfo is string && data.motherInfo.size() <= 300 &&
+      data.motherAvatarUrl is string && data.motherAvatarUrl.size() <= 2048 &&
+      data.birthWeightKg is number && data.birthWeightKg >= 0.5 && data.birthWeightKg <= 20 &&
+      data.birthHeightCm is number && data.birthHeightCm >= 20 && data.birthHeightCm <= 120 &&
+      data.birthHeadCircumferenceCm is number && data.birthHeadCircumferenceCm >= 15 && data.birthHeadCircumferenceCm <= 70 &&
+      data.specialNotes is string && data.specialNotes.size() <= 1000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: MomentEntry
+    function isValidMomentEntry(data, journalId) {
+      return data.keys().hasAll([
+        'journalId', 'ownerId', 'partnerUid', 'authorUid', 'title', 'date',
+        'mediaType', 'mediaUrl', 'category', 'notes', 'weightKg', 'heightCm',
+        'headCircumferenceCm', 'googleDriveSynced', 'googleDriveFileId',
+        'googleDriveWebViewLink', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'journalId', 'ownerId', 'partnerUid', 'authorUid', 'title', 'date',
+        'mediaType', 'mediaUrl', 'category', 'notes', 'weightKg', 'heightCm',
+        'headCircumferenceCm', 'googleDriveSynced', 'googleDriveFileId',
+        'googleDriveWebViewLink', 'createdAt', 'updatedAt'
+      ]) &&
+      data.journalId is string && data.journalId.size() <= 128 && data.journalId == journalId &&
+      isValidId(data.ownerId) &&
+      data.partnerUid is string && data.partnerUid.size() <= 128 &&
+      (data.partnerUid == '' || data.partnerUid.matches('^[a-zA-Z0-9_\\-]+$')) &&
+      isValidId(data.authorUid) && data.authorUid == request.auth.uid &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+      data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+      data.mediaType is string && data.mediaType.size() >= 5 && data.mediaType.size() <= 10 &&
+      (data.mediaType == 'image' || data.mediaType == 'video') &&
+      data.mediaUrl is string && data.mediaUrl.size() >= 1 && data.mediaUrl.size() <= 2048 &&
+      data.category is string && data.category.size() >= 5 && data.category.size() <= 32 &&
+      (
+        data.category == 'milestone_fisik' ||
+        data.category == 'kata_pertama' ||
+        data.category == 'momen_lucu' ||
+        data.category == 'bermain' ||
+        data.category == 'makan_mpasi' ||
+        data.category == 'kesehatan' ||
+        data.category == 'ulang_tahun' ||
+        data.category == 'lainnya'
+      ) &&
+      data.notes is string && data.notes.size() >= 1 && data.notes.size() <= 2000 &&
+      data.weightKg is number && data.weightKg >= 0 && data.weightKg <= 60 &&
+      data.heightCm is number && data.heightCm >= 0 && data.heightCm <= 180 &&
+      data.headCircumferenceCm is number && data.headCircumferenceCm >= 0 && data.headCircumferenceCm <= 80 &&
+      data.googleDriveSynced is bool &&
+      data.googleDriveFileId is string && data.googleDriveFileId.size() <= 256 &&
+      data.googleDriveWebViewLink is string && data.googleDriveWebViewLink.size() <= 2048 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: GrowthEntry
+    function isValidGrowthEntry(data, journalId) {
+      return data.keys().hasAll([
+        'journalId', 'ownerId', 'partnerUid', 'authorUid', 'date', 'ageMonths',
+        'weightKg', 'heightCm', 'headCircumferenceCm', 'notes', 'sourceMomentId',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'journalId', 'ownerId', 'partnerUid', 'authorUid', 'date', 'ageMonths',
+        'weightKg', 'heightCm', 'headCircumferenceCm', 'notes', 'sourceMomentId',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.journalId is string && data.journalId.size() <= 128 && data.journalId == journalId &&
+      isValidId(data.ownerId) &&
+      data.partnerUid is string && data.partnerUid.size() <= 128 &&
+      (data.partnerUid == '' || data.partnerUid.matches('^[a-zA-Z0-9_\\-]+$')) &&
+      isValidId(data.authorUid) && data.authorUid == request.auth.uid &&
+      data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+      data.ageMonths is number && data.ageMonths >= 0 && data.ageMonths <= 240 &&
+      data.weightKg is number && data.weightKg >= 0.5 && data.weightKg <= 80 &&
+      data.heightCm is number && data.heightCm >= 20 && data.heightCm <= 200 &&
+      data.headCircumferenceCm is number && data.headCircumferenceCm >= 0 && data.headCircumferenceCm <= 80 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.sourceMomentId is string && data.sourceMomentId.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: MilestoneEntry
+    function isValidMilestoneEntry(data, journalId) {
+      return data.keys().hasAll([
+        'journalId', 'ownerId', 'partnerUid', 'authorUid', 'domain', 'ageRangeLabel',
+        'minAgeMonths', 'maxAgeMonths', 'title', 'description', 'notes', 'completed',
+        'completedDate', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'journalId', 'ownerId', 'partnerUid', 'authorUid', 'domain', 'ageRangeLabel',
+        'minAgeMonths', 'maxAgeMonths', 'title', 'description', 'notes', 'completed',
+        'completedDate', 'createdAt', 'updatedAt'
+      ]) &&
+      data.journalId is string && data.journalId.size() <= 128 && data.journalId == journalId &&
+      isValidId(data.ownerId) &&
+      data.partnerUid is string && data.partnerUid.size() <= 128 &&
+      (data.partnerUid == '' || data.partnerUid.matches('^[a-zA-Z0-9_\\-]+$')) &&
+      isValidId(data.authorUid) && data.authorUid == request.auth.uid &&
+      data.domain is string && data.domain.size() >= 6 && data.domain.size() <= 32 &&
+      (
+        data.domain == 'motorik_kasar' ||
+        data.domain == 'motorik_halus' ||
+        data.domain == 'bahasa' ||
+        data.domain == 'kognitif' ||
+        data.domain == 'sosial'
+      ) &&
+      data.ageRangeLabel is string && data.ageRangeLabel.size() >= 1 && data.ageRangeLabel.size() <= 40 &&
+      data.minAgeMonths is number && data.minAgeMonths >= 0 && data.minAgeMonths <= 120 &&
+      data.maxAgeMonths is number && data.maxAgeMonths >= 0 && data.maxAgeMonths <= 120 &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 180 &&
+      data.description is string && data.description.size() >= 1 && data.description.size() <= 600 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.completed is bool &&
+      data.completedDate is string && data.completedDate.size() <= 10 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: ParentingQuoteEntry
+    function isValidParentingQuoteEntry(data, journalId) {
+      return data.keys().hasAll([
+        'journalId', 'ownerId', 'partnerUid', 'authorUid', 'orderIndex', 'text',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'journalId', 'ownerId', 'partnerUid', 'authorUid', 'orderIndex', 'text',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.journalId is string && data.journalId.size() <= 128 && data.journalId == journalId &&
+      isValidId(data.ownerId) &&
+      data.partnerUid is string && data.partnerUid.size() <= 128 &&
+      (data.partnerUid == '' || data.partnerUid.matches('^[a-zA-Z0-9_\\-]+$')) &&
+      isValidId(data.authorUid) && data.authorUid == request.auth.uid &&
+      data.orderIndex is number && data.orderIndex >= 0 && data.orderIndex <= 50 &&
+      data.text is string && data.text.size() >= 1 && data.text.size() <= 600 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Root Collection: /journals/{journalId}
+    match /journals/{journalId} {
+      allow get: if isSignedIn() && isValidId(journalId) && (
+        existing().ownerId == request.auth.uid ||
+        (existing().partnerUid != '' && existing().partnerUid == request.auth.uid)
+      );
+
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(journalId) &&
+        isValidFamilyJournal(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().partnerUid == '' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(journalId) &&
+        isValidFamilyJournal(incoming()) && (
+          // Action 1: Owner or Bound Partner updates child/parent biodata
+          (
+            (existing().ownerId == request.auth.uid || (existing().partnerUid != '' && existing().partnerUid == request.auth.uid)) &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().partnerUid == existing().partnerUid &&
+            incoming().inviteCode == existing().inviteCode &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'nickname', 'birthDate', 'gender', 'bloodType', 'avatarUrl',
+              'fatherName', 'fatherInfo', 'fatherAvatarUrl', 'motherName', 'motherInfo',
+              'motherAvatarUrl', 'birthWeightKg', 'birthHeightCm', 'birthHeadCircumferenceCm',
+              'specialNotes', 'updatedAt'
+            ])
+          ) ||
+          // Action 2: Co-parent binds their UID using the family journal ID
+          (
+            existing().partnerUid == '' &&
+            existing().ownerId != request.auth.uid &&
+            incoming().partnerUid == request.auth.uid &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().inviteCode == existing().inviteCode &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['partnerUid', 'updatedAt'])
+          )
+        );
+
+      allow delete: if false;
+
+      // Subcollection: /journals/{journalId}/moments/{momentId}
+      match /moments/{momentId} {
+        allow get: if isSignedIn() && isValidId(journalId) && isValidId(momentId) && isJournalMember(journalId);
+
+        // Zero-get() Query Enforcer on resource.data
+        allow list: if isSignedIn() && (
+          existing().ownerId == request.auth.uid ||
+          (existing().partnerUid != '' && existing().partnerUid == request.auth.uid)
+        );
+
+        allow create: if isVerifiedUser() &&
+          isValidId(journalId) &&
+          isValidId(momentId) &&
+          isValidMomentEntry(incoming(), journalId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isJournalMember(journalId) &&
+          incoming().ownerId == getJournalData(journalId).ownerId &&
+          incoming().partnerUid == getJournalData(journalId).partnerUid;
+
+        allow update: if isVerifiedUser() &&
+          isValidId(journalId) &&
+          isValidId(momentId) &&
+          isValidMomentEntry(incoming(), journalId) && (
+            isJournalMember(journalId) &&
+            incoming().journalId == existing().journalId &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'partnerUid', 'authorUid', 'title', 'date', 'mediaType', 'mediaUrl',
+              'category', 'notes', 'weightKg', 'heightCm', 'headCircumferenceCm',
+              'googleDriveSynced', 'googleDriveFileId', 'googleDriveWebViewLink', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isVerifiedUser() && isValidId(journalId) && isValidId(momentId) && isJournalMember(journalId);
+      }
+
+      // Subcollection: /journals/{journalId}/growth_records/{recordId}
+      match /growth_records/{recordId} {
+        allow get: if isSignedIn() && isValidId(journalId) && isValidId(recordId) && isJournalMember(journalId);
+
+        allow list: if isSignedIn() && (
+          existing().ownerId == request.auth.uid ||
+          (existing().partnerUid != '' && existing().partnerUid == request.auth.uid)
+        );
+
+        allow create: if isVerifiedUser() &&
+          isValidId(journalId) &&
+          isValidId(recordId) &&
+          isValidGrowthEntry(incoming(), journalId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isJournalMember(journalId) &&
+          incoming().ownerId == getJournalData(journalId).ownerId &&
+          incoming().partnerUid == getJournalData(journalId).partnerUid;
+
+        allow update: if isVerifiedUser() &&
+          isValidId(journalId) &&
+          isValidId(recordId) &&
+          isValidGrowthEntry(incoming(), journalId) && (
+            isJournalMember(journalId) &&
+            incoming().journalId == existing().journalId &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'partnerUid', 'authorUid', 'date', 'ageMonths', 'weightKg', 'heightCm',
+              'headCircumferenceCm', 'notes', 'sourceMomentId', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isVerifiedUser() && isValidId(journalId) && isValidId(recordId) && isJournalMember(journalId);
+      }
+
+      // Subcollection: /journals/{journalId}/milestones/{milestoneId}
+      match /milestones/{milestoneId} {
+        allow get: if isSignedIn() && isValidId(journalId) && isValidId(milestoneId) && isJournalMember(journalId);
+
+        allow list: if isSignedIn() && (
+          existing().ownerId == request.auth.uid ||
+          (existing().partnerUid != '' && existing().partnerUid == request.auth.uid)
+        );
+
+        allow create: if isVerifiedUser() &&
+          isValidId(journalId) &&
+          isValidId(milestoneId) &&
+          isValidMilestoneEntry(incoming(), journalId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isJournalMember(journalId) &&
+          incoming().ownerId == getJournalData(journalId).ownerId &&
+          incoming().partnerUid == getJournalData(journalId).partnerUid;
+
+        allow update: if isVerifiedUser() &&
+          isValidId(journalId) &&
+          isValidId(milestoneId) &&
+          isValidMilestoneEntry(incoming(), journalId) && (
+            isJournalMember(journalId) &&
+            incoming().journalId == existing().journalId &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'partnerUid', 'authorUid', 'title', 'description', 'notes', 'completed', 'completedDate', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isVerifiedUser() && isValidId(journalId) && isValidId(milestoneId) && isJournalMember(journalId);
+      }
+
+      // Subcollection: /journals/{journalId}/parenting_quotes/{quoteId}
+      match /parenting_quotes/{quoteId} {
+        allow get: if isSignedIn() && isValidId(journalId) && isValidId(quoteId) && isJournalMember(journalId);
+
+        allow list: if isSignedIn() && (
+          existing().ownerId == request.auth.uid ||
+          (existing().partnerUid != '' && existing().partnerUid == request.auth.uid)
+        );
+
+        allow create: if isVerifiedUser() &&
+          isValidId(journalId) &&
+          isValidId(quoteId) &&
+          isValidParentingQuoteEntry(incoming(), journalId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isJournalMember(journalId) &&
+          incoming().ownerId == getJournalData(journalId).ownerId &&
+          incoming().partnerUid == getJournalData(journalId).partnerUid;
+
+        allow update: if isVerifiedUser() &&
+          isValidId(journalId) &&
+          isValidId(quoteId) &&
+          isValidParentingQuoteEntry(incoming(), journalId) && (
+            isJournalMember(journalId) &&
+            incoming().journalId == existing().journalId &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'partnerUid', 'authorUid', 'orderIndex', 'text', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isVerifiedUser() && isValidId(journalId) && isValidId(quoteId) && isJournalMember(journalId);
+      }
+    }
+  }
+}

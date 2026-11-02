@@ -16,6 +16,8 @@ import {
   formatHeadCirc,
   WHO_WEIGHT_BOYS,
   WHO_HEIGHT_BOYS,
+  WHO_WEIGHT_GIRLS,
+  WHO_HEIGHT_GIRLS,
   getWHOGrowthStatus,
 } from '../utils/growth.ts';
 
@@ -59,7 +61,14 @@ export const GrowthCharts: React.FC<GrowthChartsProps> = ({
     return padding.top + chartHeight - ((val - minY) / (maxY - minY)) * chartHeight;
   };
 
-  const whoData = chartMetric === 'weight' ? WHO_WEIGHT_BOYS : WHO_HEIGHT_BOYS;
+  const whoData =
+    chartMetric === 'weight'
+      ? profile.gender === 'female'
+        ? WHO_WEIGHT_GIRLS
+        : WHO_WEIGHT_BOYS
+      : profile.gender === 'female'
+      ? WHO_HEIGHT_GIRLS
+      : WHO_HEIGHT_BOYS;
 
   // Build SVG Path strings for WHO bands
   const buildBandPath = () => {
@@ -343,7 +352,7 @@ export const GrowthCharts: React.FC<GrowthChartsProps> = ({
             </thead>
             <tbody className="divide-y divide-slate-100">
               {sortedRecords.map((item) => {
-                const status = getWHOGrowthStatus(item.ageMonths, item.weightKg);
+                const status = getWHOGrowthStatus(item.ageMonths, item.weightKg, profile.gender);
                 return (
                   <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-2.5 px-3 font-semibold text-slate-900">

@@ -1,6 +1,18 @@
-import React from 'react';
-import { Cloud, HardDrive, CheckCircle2, LogOut, Loader2, Folder, ExternalLink } from 'lucide-react';
+import React, { useState } from 'react';
+import {
+  Cloud,
+  HardDrive,
+  CheckCircle2,
+  LogOut,
+  Loader2,
+  Folder,
+  Copy,
+  Check,
+  Users,
+  Database,
+} from 'lucide-react';
 import type { User } from 'firebase/auth';
+import { firebaseConfig, cloudinaryConfig } from '../firebase.ts';
 
 interface StorageDestinationCardProps {
   storageDestination: 'google_drive' | 'vps_local';
@@ -11,6 +23,8 @@ interface StorageDestinationCardProps {
   onConnectGoogle: () => void;
   onDisconnectGoogle: () => void;
   childName: string;
+  activeJournalId?: string;
+  onJoinFamilyJournal?: (journalCode: string) => Promise<void>;
 }
 
 export const StorageDestinationCard: React.FC<StorageDestinationCardProps> = ({
@@ -22,16 +36,62 @@ export const StorageDestinationCard: React.FC<StorageDestinationCardProps> = ({
   onConnectGoogle,
   onDisconnectGoogle,
   childName,
+  activeJournalId,
+  onJoinFamilyJournal,
 }) => {
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [partnerCodeInput, setPartnerCodeInput] = useState('');
+  const [isJoining, setIsJoining] = useState(false);
+
+  const handleCopyJournalId = async () => {
+    if (!activeJournalId) return;
+    try {
+      await navigator.clipboard.writeText(activeJournalId);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2500);
+    } catch {
+      // ignore clipboard restriction
+    }
+  };
+
+  const handleJoinSubmit = async () => {
+    if (!partnerCodeInput.trim() || !onJoinFamilyJournal) return;
+    setIsJoining(true);
+    try {
+      await onJoinFamilyJournal(partnerCodeInput.trim());
+      setPartnerCodeInput('');
+    } finally {
+      setIsJoining(false);
+    }
+  };
+
   return (
     <div className="bg-[#FFFDF9] rounded-3xl border border-[#EDE8DF] p-5 sm:p-6 shadow-xs space-y-4">
-      {/* Label Tujuan Penyimpanan */}
+      {/* Status Real-Time Firebase Firestore ("salma-anak-kami") + Cloudinary ("la3st6qh") */}
+      <div className="rounded-2xl bg-teal-50/70 border border-teal-200 p-3.5 space-y-1.5">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <span className="text-xs font-extrabold text-teal-950 flex items-center gap-1.5">
+            <Database className="w-3.5 h-3.5 text-teal-700" />
+            <span>Sinkronisasi Cloud Keluarga Aktif</span>
+          </span>
+          <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+            Firestore + Cloudinary Real-Time
+          </span>
+        </div>
+        <p className="text-[11px] text-teal-900/85 leading-relaxed">
+          Firestore: <strong className="font-mono">{firebaseConfig.projectId}</strong> &bull; Media
+          Cloudinary: <strong className="font-mono">{cloudinaryConfig.cloudName}</strong>. Setiap
+          catatan, foto, video, dan BB/TB otomatis ter-update real-time di HP Ayah &amp; HP Bunda.
+        </p>
+      </div>
+
+      {/* Label Tujuan Penyimpanan Cadangan */}
       <div>
         <span className="text-[11px] font-bold tracking-wider text-slate-500 uppercase">
-          Tujuan Penyimpanan:
+          Sinkronisasi Akun &amp; Cadangan Cloud:
         </span>
 
-        {/* Tab Pilihan: Google Drive vs Server VPS / Lokal */}
+        {/* Tab Pilihan: Google Cloud / Drive vs Penyimpanan Lokal */}
         <div className="grid grid-cols-2 gap-3 mt-2.5">
           <button
             type="button"
@@ -42,8 +102,12 @@ export const StorageDestinationCard: React.FC<StorageDestinationCardProps> = ({
                 : 'bg-[#FAF8F5] text-slate-600 hover:text-slate-900 border border-slate-200'
             }`}
           >
-            <Cloud className={`w-4 h-4 ${storageDestination === 'google_drive' ? 'text-sky-600' : 'text-slate-400'}`} />
-            <span>Google Drive</span>
+            <Cloud
+              className={`w-4 h-4 ${
+                storageDestination === 'google_drive' ? 'text-sky-600' : 'text-slate-400'
+              }`}
+            />
+            <span>Cloud &amp; Drive</span>
           </button>
 
           <button
@@ -55,8 +119,12 @@ export const StorageDestinationCard: React.FC<StorageDestinationCardProps> = ({
                 : 'bg-[#FAF8F5] text-slate-600 hover:text-slate-900 border border-slate-200'
             }`}
           >
-            <HardDrive className={`w-4 h-4 ${storageDestination === 'vps_local' ? 'text-emerald-600' : 'text-slate-400'}`} />
-            <span>Server VPS / Lokal</span>
+            <HardDrive
+              className={`w-4 h-4 ${
+                storageDestination === 'vps_local' ? 'text-emerald-600' : 'text-slate-400'
+              }`}
+            />
+            <span>Offline / Lokal</span>
           </button>
         </div>
       </div>
@@ -65,13 +133,12 @@ export const StorageDestinationCard: React.FC<StorageDestinationCardProps> = ({
       {storageDestination === 'google_drive' ? (
         <div className="space-y-3">
           {!currentUser ? (
-            /* Kotak Kuning / Amber Persis Sesuai Screenshot User */
             <div className="rounded-2xl bg-amber-50/70 border border-amber-200 p-4 sm:p-5 space-y-3">
               <p className="text-xs sm:text-sm text-amber-900 leading-relaxed font-medium">
-                Hubungkan akun Google Drive pribadi Anda untuk upload otomatis (Kuota 15 GB, sama seperti di E-Agenda).
+                Hubungkan Akun Google untuk mengaktifkan sinkronisasi Cloud Firestore &amp; Firebase
+                Storage lintas HP (Ayah &amp; Bunda) serta cadangan otomatis Google Drive.
               </p>
 
-              {/* Tombol Resmi "Hubungkan Akun Google" dengan logo Google */}
               <button
                 type="button"
                 onClick={onConnectGoogle}
@@ -109,69 +176,132 @@ export const StorageDestinationCard: React.FC<StorageDestinationCardProps> = ({
               </button>
             </div>
           ) : (
-            /* Akun Google Sudah Terhubung */
-            <div className="rounded-2xl bg-sky-50/60 border border-sky-200 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                {currentUser.photoURL ? (
-                  <img
-                    src={currentUser.photoURL}
-                    alt={currentUser.displayName || 'Akun Google'}
-                    referrerPolicy="no-referrer"
-                    className="w-10 h-10 rounded-full border border-sky-300 shadow-xs shrink-0"
-                  />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-sky-600 text-white font-bold flex items-center justify-center shrink-0">
-                    {(currentUser.displayName || currentUser.email || 'G').charAt(0).toUpperCase()}
+            <div className="space-y-3">
+              {/* Akun Google Sudah Terhubung */}
+              <div className="rounded-2xl bg-sky-50/60 border border-sky-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  {currentUser.photoURL ? (
+                    <img
+                      src={currentUser.photoURL}
+                      alt={currentUser.displayName || 'Akun Google'}
+                      referrerPolicy="no-referrer"
+                      className="w-10 h-10 rounded-full border border-sky-300 shadow-xs shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-sky-600 text-white font-bold flex items-center justify-center shrink-0">
+                      {(currentUser.displayName || currentUser.email || 'G')
+                        .charAt(0)
+                        .toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                        {currentUser.displayName || 'Akun Google'}
+                      </span>
+                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        Aktif
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 truncate">{currentUser.email}</p>
+                    <p className="text-[11px] text-sky-800 font-medium mt-0.5 flex items-center gap-1">
+                      <Folder className="w-3 h-3 text-sky-600 shrink-0" />
+                      <span className="truncate">
+                        Folder: <strong>Jurnal Tumbuh Kembang - {childName}</strong>
+                      </span>
+                    </p>
                   </div>
-                )}
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs sm:text-sm font-bold text-slate-900">
-                      {currentUser.displayName || 'Akun Google'}
-                    </span>
-                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                      Terhubung
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500">{currentUser.email}</p>
-                  <p className="text-[11px] text-sky-800 font-medium mt-0.5 flex items-center gap-1">
-                    <Folder className="w-3 h-3 text-sky-600" />
-                    Folder otomatis: <strong>Jurnal Tumbuh Kembang - {childName}</strong>
-                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                  {driveQuota && (
+                    <div className="text-right hidden sm:block text-xs">
+                      <span className="text-[10px] text-slate-500 block">Drive:</span>
+                      <span className="font-bold text-slate-800 tabular-nums text-[11px]">
+                        {driveQuota.usageGb}/{driveQuota.limitGb} GB
+                      </span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={onDisconnectGoogle}
+                    className="px-3 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-800 bg-white hover:bg-rose-50 border border-rose-200 rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Putuskan</span>
+                  </button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 self-end sm:self-center">
-                {driveQuota && (
-                  <div className="text-right hidden sm:block text-xs">
-                    <span className="text-[11px] text-slate-500 block">Kapasitas Drive:</span>
-                    <span className="font-bold text-slate-800 tabular-nums">
-                      {driveQuota.usageGb} GB / {driveQuota.limitGb} GB
+              {/* Sinkronisasi Antar HP (Kode Jurnal Keluarga Cloud Firestore) */}
+              {activeJournalId && (
+                <div className="rounded-2xl bg-[#FAF8F5] border border-[#E9E4DB] p-3.5 space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-teal-600" />
+                      <span>Tautkan HP Ayah &amp; HP Bunda (Firestore)</span>
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyJournalId()}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 font-semibold text-[11px] text-slate-700 cursor-pointer"
+                    >
+                      {copiedCode ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span>Tersalin</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3 text-slate-500" />
+                          <span>Salin ID Jurnal</span>
+                        </>
+                      )}
+                    </button>
                   </div>
-                )}
-                <button
-                  type="button"
-                  onClick={onDisconnectGoogle}
-                  className="px-3 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-800 bg-white hover:bg-rose-50 border border-rose-200 rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Putuskan</span>
-                </button>
-              </div>
+
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    ID Jurnal Cloud saat ini:{' '}
+                    <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-800 font-mono text-[10px]">
+                      {activeJournalId}
+                    </code>
+                  </p>
+
+                  {onJoinFamilyJournal && (
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <input
+                        type="text"
+                        value={partnerCodeInput}
+                        onChange={(e) => setPartnerCodeInput(e.target.value)}
+                        placeholder="Tempel ID Jurnal dari HP pasangan..."
+                        className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-teal-500 text-slate-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleJoinSubmit()}
+                        disabled={isJoining || !partnerCodeInput.trim()}
+                        className="px-3 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white font-bold text-xs cursor-pointer"
+                      >
+                        {isJoining ? 'Menautkan...' : 'Gabung'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
       ) : (
-        /* Pilihan Server VPS / Lokal */
         <div className="rounded-2xl bg-emerald-50/50 border border-emerald-200 p-4 sm:p-5 text-xs text-emerald-950 space-y-1">
           <p className="font-bold flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            Mode Penyimpanan Lokal & Cache Browser Aktif
+            Mode Offline Fallback (IndexedDB + LocalStorage) Aktif
           </p>
           <p className="text-slate-600 text-[11px] leading-relaxed">
-            Foto, video, dan catatan milestone tersimpan langsung di browser perangkat Anda dan dapat diekspor menjadi file JSON kapan saja tanpa perlu login Google.
+            Saat internet mati atau tanpa sinyal, seluruh perubahan biodata Salma, catatan BB/TB,
+            milestone, Mutiara Parenting, dan foto tetap berjalan lancar di memori lokal perangkat,
+            lalu tersinkronisasi otomatis ketika internet kembali aktif.
           </p>
         </div>
       )}

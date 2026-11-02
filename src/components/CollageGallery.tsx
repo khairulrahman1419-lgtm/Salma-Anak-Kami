@@ -253,16 +253,26 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
                   {/* POLAROID FRAME */}
                   <div className="bg-white p-3.5 pb-4 rounded-3xl shadow-md group-hover:shadow-xl border border-slate-200/80 transition-shadow">
                     <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-100 border border-slate-100">
-                      <img
-                        src={item.mediaUrl}
-                        alt={item.title}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover group-hover:brightness-105 group-hover:scale-102 transition-all duration-300"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src =
-                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" fill="%23f1f5f9"><rect width="400" height="300" fill="%23f8fafc"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2394a3b8">Foto Momen</text></svg>';
-                        }}
-                      />
+                      {item.mediaType === 'video' ? (
+                        <video
+                          src={item.mediaUrl}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <img
+                          src={item.mediaUrl}
+                          alt={item.title}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover group-hover:brightness-105 group-hover:scale-102 transition-all duration-300"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src =
+                              'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" fill="%23f1f5f9"><rect width="400" height="300" fill="%23f8fafc"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2394a3b8">Foto Momen</text></svg>';
+                          }}
+                        />
+                      )}
 
                       {item.weightKg && (
                         <div className="absolute top-2.5 right-2.5 bg-slate-900/85 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
@@ -360,12 +370,22 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
                 className="group bg-[#FFFDF9] rounded-2xl border border-[#EDE8DF] hover:border-slate-300 hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer"
               >
                 <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden">
-                  <img
-                    src={item.mediaUrl}
-                    alt={item.title}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
-                  />
+                  {item.mediaType === 'video' ? (
+                    <video
+                      src={item.mediaUrl}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <img
+                      src={item.mediaUrl}
+                      alt={item.title}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
+                    />
+                  )}
                   <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-white/95 text-slate-800 shadow-xs">
                       {categoryMeta.label}

@@ -1,6 +1,6 @@
 /**
- * Mengunduh file foto atau video yang sudah tersimpan di aplikasi
- * secara aman di perangkat mobile maupun desktop (tanpa window.open).
+ * Mengunduh file foto atau video (termasuk yang tersimpan di Cloudinary `res.cloudinary.com`)
+ * secara aman di perangkat mobile maupun desktop tanpa `window.open`.
  */
 export async function downloadMediaFile(
   mediaUrl: string,
@@ -15,7 +15,7 @@ export async function downloadMediaFile(
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
-      .slice(0, 50) || 'momen-anak';
+      .slice(0, 50) || 'momen-salma';
 
   const triggerAnchorDownload = (href: string, filename: string) => {
     const link = document.createElement('a');
@@ -64,7 +64,11 @@ export async function downloadMediaFile(
     console.error('Download media fallback:', err);
     try {
       const ext = mediaType === 'video' ? 'mp4' : 'jpg';
-      triggerAnchorDownload(mediaUrl, `${safeSlug}.${ext}`);
+      // Untuk URL Cloudinary, tambahkan flag fl_attachment agar langsung terunduh di browser HP
+      const attachmentUrl = mediaUrl.includes('res.cloudinary.com/')
+        ? mediaUrl.replace('/upload/', `/upload/fl_attachment:${safeSlug}/`)
+        : mediaUrl;
+      triggerAnchorDownload(attachmentUrl, `${safeSlug}.${ext}`);
       return true;
     } catch {
       return false;

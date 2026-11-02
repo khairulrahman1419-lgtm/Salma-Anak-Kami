@@ -10,6 +10,8 @@ import {
   Loader2,
   ShieldAlert,
   Trash2,
+  Globe,
+  ExternalLink,
 } from 'lucide-react';
 import type { ChildProfile } from '../types/index.ts';
 import { calculateAge, type LatestMeasurements } from '../utils/growth.ts';
@@ -19,11 +21,18 @@ interface FloatingDoctorFAQProps {
   latestStats: LatestMeasurements;
 }
 
+interface GroundedWebSource {
+  uri: string;
+  title: string;
+}
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'model';
   text: string;
   timestamp: string;
+  sources?: GroundedWebSource[];
+  relatedQuery?: string;
 }
 
 interface FAQItem {
@@ -42,7 +51,7 @@ const PEDIATRIC_FAQS: FAQItem[] = [
     answer:
       'Menurut pedoman IDAI & WHO, kenaikan BB perlu dievaluasi bila garis pertumbuhan mendatar, menurun memotong garis persentil, atau tidak mencapai kenaikan minimal bulanan sesuai usia. Evaluasi kecukupan kalori, protein hewani, jadwal makan teratur (feeding rules), dan pastikan tidak ada infeksi tersembunyi seperti ISK atau anemia defisiensi besi.',
     followUpPrompt:
-      'Bagaimana evaluasi berat dan tinggi badan anak saya saat ini menurut kurva WHO, dan apa tips menaikkan BB secara sehat?',
+      'Bagaimana evaluasi berat dan tinggi badan anak saya saat ini menurut kurva WHO, dan apa tips menaikkan BB secara sehat berdasarkan rujukan IDAI & Halodoc?',
   },
   {
     id: 'faq_mpasi_gtm',
@@ -51,16 +60,25 @@ const PEDIATRIC_FAQS: FAQItem[] = [
     answer:
       'Terapkan Feeding Rules IDAI: jadwalkan makan utama 3x dan camilan 2x sehari, batasi durasi makan maksimal 30 menit, hindari distraksi gadget/TV, jangan memaksa anak makan, dan utamakan menu padat gizi tinggi protein hewani (telur, ikan, ayam, daging, hati ayam) serta lemak tambahan.',
     followUpPrompt:
-      'Anak saya sedang GTM susah makan. Buatkan contoh jadwal makan harian dan ide menu tinggi protein hewani sesuai usianya.',
+      'Anak saya sedang GTM susah makan. Carikan referensi jadwal makan harian dan resep MPASI tinggi protein hewani sesuai usianya.',
   },
   {
     id: 'faq_demam',
-    category: 'Kesehatan & Imunisasi',
-    question: 'Apa pertolongan pertama saat anak demam di rumah dan kapan harus segera ke dokter?',
+    category: 'Kesehatan & Gejala',
+    question: 'Apa pertolongan pertama saat anak demam, batuk pilek, atau diare di rumah?',
     answer:
-      'Demam terhitung bila suhu tubuh >= 38,0°C (ukur dengan termometer di ketiak). Berikan cairan/ASI lebih sering, kenakan pakaian tipis nyaman, dan kompres hangat di lipat ketiak/selangkangan. Segera ke dokter/IGD bila bayi < 3 bulan demam, demam > 72 jam, anak tampak sangat lemas/sulit dibangunkan, kejang, sesak, atau muntah terus-menerus.',
+      'Demam terhitung bila suhu tubuh >= 38,0°C. Berikan cairan/ASI lebih sering untuk mencegah dehidrasi, kenakan pakaian tipis nyaman, dan kompres hangat di lipat ketiak. Segera ke dokter/IGD bila bayi < 3 bulan demam, demam > 72 jam, anak tampak sangat lemas, kejang, napas cepat/cekung, atau muntah terus-menerus.',
     followUpPrompt:
-      'Apa saja panduan observasi anak demam di rumah dan tanda bahaya yang harus Ayah & Ibu waspadai?',
+      'Apa panduan pertolongan pertama anak demam dan batuk pilek di rumah serta tanda bahaya menurut Halodoc & IDAI?',
+  },
+  {
+    id: 'faq_imunisasi_kulit',
+    category: 'Imunisasi & Kulit',
+    question: 'Jadwal imunisasi dasar & lanjutan IDAI serta cara merawat ruam kulit bayi?',
+    answer:
+      'Imunisasi dasar dan booster sesuai jadwal IDAI (Hepatitis B, Polio, BCG, DPT-HB-Hib, PCV, Rotavirus, MR, JE, Varisela) melindungi si kecil dari penyakit berat. Untuk ruam popok atau biang keringat, jaga kulit tetap kering, gunakan pelembap khusus bayi tanpa pewangi, dan ganti popok secara berkala.',
+    followUpPrompt:
+      'Apa saja jadwal imunisasi penting sesuai usia anak saya saat ini dan tips merawat kulit sensitif bayi?',
   },
   {
     id: 'faq_bicara',
@@ -70,15 +88,6 @@ const PEDIATRIC_FAQS: FAQItem[] = [
       'Ajak anak berbicara dua arah dengan kontak mata sejajar, bacakan buku bergambar setiap hari, kurangi screen time (IDAI menyarankan nol gadget untuk anak < 2 tahun kecuali video call keluarga), dan beri jeda agar anak merespons. Konsultasikan ke dokter anak bila usia 12 bulan belum babbling/menunjuk, atau 18 bulan belum ada kata bermakna.',
     followUpPrompt:
       'Berikan permainan stimulasi bicara dan motorik sehari-hari yang cocok untuk usia anak saya sekarang.',
-  },
-  {
-    id: 'faq_tidur',
-    category: 'Pola Tidur',
-    question: 'Berapa jam kebutuhan tidur ideal bayi & batita untuk hormon pertumbuhan optimal?',
-    answer:
-      'Hormon pertumbuhan (Growth Hormone) bekerja optimal saat tidur malam yang nyenyak. Usia 4–12 bulan membutuhkan sekitar 12–16 jam/hari (termasuk tidur siang), sedangkan usia 1–2 tahun membutuhkan 11–14 jam/hari. Ciptakan rutinitas sebelum tidur yang tenang dan redupkan lampu kamar.',
-    followUpPrompt:
-      'Bagaimana tips mengatur jam tidur malam yang nyenyak sesuai usia anak saya agar tumbuh kembangnya optimal?',
   },
 ];
 
@@ -96,7 +105,7 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
     {
       id: 'welcome_dr_ai',
       role: 'model',
-      text: `Halo ${profile.fatherName || 'Ayah'}${profile.motherName ? ` & ${profile.motherName}` : ''}! Saya dr. AI, asisten konsultasi edukasi tumbuh kembang anak.\n\nSaya sudah membaca data singkat ${profile.nickname} (${age.label}, BB terakhir ${latestStats.weightKg} kg, TB ${latestStats.heightCm} cm). Silakan tanyakan seputar kurva WHO, nutrisi MPASI, milestone, atau keluhan harian si kecil.`,
+      text: `Halo ${profile.fatherName || 'Ayah'}${profile.motherName ? ` & ${profile.motherName}` : ''}! Saya dr. AI, konsultan edukasi kesehatan anak & keluarga yang terhubung langsung dengan pencarian Google untuk merujuk artikel medis tepercaya (seperti Halodoc, IDAI, Alodokter, Kemenkes, & WHO).\n\nData singkat ${profile.nickname}: usia ${age.label}, BB ${latestStats.weightKg} kg, TB ${latestStats.heightCm} cm. Silakan tanyakan keluhan kesehatan, nutrisi MPASI, imunisasi, maupun pertanyaan kesehatan luas apa saja!`,
       timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -155,7 +164,11 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
         }),
       });
 
-      const data = (await response.json()) as { reply?: string; error?: string };
+      const data = (await response.json()) as {
+        reply?: string;
+        sources?: GroundedWebSource[];
+        error?: string;
+      };
 
       if (!response.ok || data.error) {
         throw new Error(data.error || 'Gagal menghubungi layanan dr. AI.');
@@ -166,6 +179,8 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
         role: 'model',
         text: data.reply || 'Terima kasih, silakan sampaikan detail tambahan bila ada.',
         timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        sources: Array.isArray(data.sources) ? data.sources : [],
+        relatedQuery: trimmed,
       };
 
       setMessages((prev) => [...prev, aiMsg]);
@@ -181,6 +196,7 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
           role: 'model',
           text: `Maaf Ayah & Bunda, ${message}`,
           timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+          relatedQuery: trimmed,
         },
       ]);
     } finally {
@@ -198,7 +214,7 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
       {
         id: `welcome_${Date.now()}`,
         role: 'model',
-        text: `Percakapan telah diperbarui. Silakan ajukan pertanyaan baru seputar tumbuh kembang ${profile.nickname} (${age.label}).`,
+        text: `Percakapan telah diperbarui. Silakan ajukan pertanyaan apa saja seputar kesehatan atau tumbuh kembang ${profile.nickname} (${age.label}).`,
         timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
       },
     ]);
@@ -206,9 +222,10 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
 
   const quickPrompts = [
     `Apakah BB ${latestStats.weightKg} kg & TB ${latestStats.heightCm} cm sudah ideal untuk usia ${age.compactLabel}?`,
-    'Ide menu MPASI tinggi protein hewani penambah BB',
-    `Stimulasi motorik & bicara usia ${age.compactLabel}`,
-    'Tanda bahaya saat anak demam atau batuk pilek',
+    'Cara mengatasi anak batuk pilek & hidung tersumbat malam hari',
+    'Ide menu MPASI tinggi zat besi & protein hewani penambah BB',
+    'Penyebab ruam merah pada kulit bayi & cara mengatasinya',
+    `Jadwal imunisasi IDAI untuk usia ${age.compactLabel}`,
   ];
 
   return (
@@ -246,7 +263,7 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-md h-[86vh] sm:h-[620px] max-h-[90vh] bg-white/92 backdrop-blur-xl rounded-t-3xl sm:rounded-3xl border border-emerald-200/90 shadow-2xl flex flex-col overflow-hidden"
+            className="w-full sm:max-w-md h-[87vh] sm:h-[640px] max-h-[92vh] bg-white/94 backdrop-blur-xl rounded-t-3xl sm:rounded-3xl border border-emerald-200/90 shadow-2xl flex flex-col overflow-hidden"
           >
             {/* Header */}
             <div className="px-4 py-3.5 bg-gradient-to-r from-[#0F5249]/95 to-[#115E59]/95 text-white flex items-center justify-between gap-3">
@@ -257,14 +274,14 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <h3 className="text-sm font-extrabold tracking-tight truncate">
-                      Tanya dr. AI · Konsultasi &amp; FAQ
+                      Tanya dr. AI · Google &amp; Medis
                     </h3>
                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-400/25 text-emerald-100 border border-emerald-300/30">
                       Online
                     </span>
                   </div>
                   <p className="text-[11px] text-emerald-100/90 truncate">
-                    Konteks: {profile.nickname} ({age.compactLabel} · {latestStats.weightKg} kg)
+                    Rujukan Halodoc, IDAI &amp; WHO · {profile.nickname} ({age.compactLabel})
                   </p>
                 </div>
               </div>
@@ -303,7 +320,7 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
                 }`}
               >
                 <MessageCircleHeart className="w-3.5 h-3.5" />
-                <span>Chat dr. AI</span>
+                <span>Chat dr. AI (Luas)</span>
               </button>
               <button
                 type="button"
@@ -323,13 +340,24 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
             {activeTab === 'chat' ? (
               <>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {/* Medical Info Notice */}
-                  <div className="p-2.5 rounded-xl bg-amber-50/90 border border-amber-200/80 flex items-start gap-2 text-[10px] text-amber-900 leading-relaxed">
-                    <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                    <span>
-                      Edukasi berbasis pedoman IDAI &amp; WHO. Untuk kondisi gawat darurat atau resep
-                      obat, tetap periksakan langsung ke Dokter Spesialis Anak.
-                    </span>
+                  {/* Medical Info & Halodoc Portal Shortcut */}
+                  <div className="p-2.5 rounded-xl bg-amber-50/90 border border-amber-200/80 flex items-start justify-between gap-2 text-[10px] text-amber-900 leading-relaxed">
+                    <div className="flex items-start gap-2">
+                      <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <span>
+                        Terhubung pencarian Google (Halodoc, IDAI, Alodokter, WHO). Kondisi darurat
+                        tetap periksakan langsung ke dokter.
+                      </span>
+                    </div>
+                    <a
+                      href="https://www.halodoc.com/kesehatan"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[9px] transition-colors"
+                    >
+                      <span>Halodoc</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
                   </div>
 
                   {/* Messages */}
@@ -339,13 +367,59 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
                       className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                       <div
-                        className={`max-w-[86%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed shadow-2xs ${
+                        className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed shadow-2xs ${
                           msg.role === 'user'
                             ? 'bg-teal-700 text-white rounded-br-sm'
                             : 'bg-white border border-slate-200/90 text-slate-800 rounded-bl-sm'
                         }`}
                       >
                         <div className="whitespace-pre-line">{msg.text}</div>
+
+                        {/* Grounded Web References from Google Search */}
+                        {msg.role === 'model' &&
+                          ((msg.sources && msg.sources.length > 0) || msg.relatedQuery) && (
+                            <div className="mt-2.5 pt-2 border-t border-slate-100 space-y-1.5">
+                              {msg.sources && msg.sources.length > 0 && (
+                                <>
+                                  <span className="flex items-center gap-1 text-[10px] font-bold text-teal-800">
+                                    <Globe className="w-3 h-3 text-teal-600" />
+                                    <span>Sumber Referensi Web:</span>
+                                  </span>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {msg.sources.map((src, sIdx) => (
+                                      <a
+                                        key={sIdx}
+                                        href={src.uri}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-200 text-[10px] font-semibold text-teal-800 max-w-full"
+                                      >
+                                        <span className="truncate max-w-[180px]">{src.title}</span>
+                                        <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                      </a>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+
+                              {msg.relatedQuery && (
+                                <div className="flex items-center gap-2 pt-0.5">
+                                  <a
+                                    href={`https://www.google.com/search?q=${encodeURIComponent(
+                                      `${msg.relatedQuery} site:halodoc.com OR site:idai.or.id OR site:alodokter.com`
+                                    )}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 hover:underline"
+                                  >
+                                    <span>Baca artikel terkait di Halodoc / IDAI</span>
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                         <span
                           className={`block text-[9px] mt-1 text-right ${
                             msg.role === 'user' ? 'text-emerald-100/80' : 'text-slate-400'
@@ -361,7 +435,7 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
                     <div className="flex justify-start">
                       <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-3.5 py-2.5 text-xs text-slate-600 flex items-center gap-2 shadow-2xs">
                         <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-600" />
-                        <span>dr. AI sedang menyiapkan penjelasan...</span>
+                        <span>dr. AI sedang mencari referensi medis...</span>
                       </div>
                     </div>
                   )}
@@ -395,7 +469,7 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
                     type="text"
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
-                    placeholder={`Tanya seputar tumbuh kembang ${profile.nickname}...`}
+                    placeholder="Tanya gejala, nutrisi, obat, atau kesehatan anak..."
                     disabled={isLoading}
                     className="flex-1 px-3.5 py-2.5 text-xs bg-[#FAF8F5] border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500/25 focus:border-teal-500 text-slate-900"
                   />
@@ -413,8 +487,8 @@ export const FloatingDoctorFAQ: React.FC<FloatingDoctorFAQProps> = ({
               /* Tab 2: FAQ Dokter Anak Accordion */
               <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
                 <p className="text-[11px] text-slate-500 px-1">
-                  Pertanyaan populer seputar tumbuh kembang anak. Ketuk topik untuk membaca panduan
-                  singkat atau lanjut konsultasi dengan dr. AI:
+                  Pertanyaan populer seputar kesehatan &amp; tumbuh kembang anak. Ketuk topik untuk
+                  membaca panduan singkat atau lanjut konsultasi mendalam dengan dr. AI:
                 </p>
 
                 {PEDIATRIC_FAQS.map((item) => {

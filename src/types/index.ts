@@ -45,6 +45,7 @@ export interface MomentItem {
   googleDriveSynced: boolean;
   googleDriveFileId?: string;
   googleDriveWebViewLink?: string;
+  pendingStorageUpload?: boolean;
   createdAt: string;
 }
 
@@ -70,6 +71,13 @@ export interface MilestoneChecklistItem {
   completed: boolean;
   completedDate?: string;
   notes?: string;
+}
+
+export interface ParentingQuoteItem {
+  id: string;
+  orderIndex: number;
+  text: string;
+  updatedAt?: string;
 }
 
 export interface FilterOptions {

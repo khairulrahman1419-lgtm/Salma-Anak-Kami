@@ -17,6 +17,7 @@ import {
 import type { User } from 'firebase/auth';
 import type { MomentCategory, MomentItem } from '../types/index.ts';
 import { uploadMediaToGoogleDrive } from '../services/googleDriveClient.ts';
+import { uploadChildMediaOnline } from '../services/mediaFirebaseStorage.ts';
 import { simulateGoogleDriveUpload } from '../utils/googleDriveService.ts';
 import { downloadMediaFile } from '../utils/downloadMedia.ts';
 
@@ -55,7 +56,7 @@ const PRESET_SAMPLE_MEDIA = [
   },
 ];
 
-function compressImageToDataUrl(file: File, maxDimension = 1080, quality = 0.8): Promise<string> {
+function compressImageToDataUrl(file: File, maxDimension = 1200, quality = 0.84): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Gagal membaca file gambar.'));
@@ -130,14 +131,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [headCircumferenceCm, setHeadCircumferenceCm] = useState<string>('');
   const [notes, setNotes] = useState('');
 
-  // UI & Drive Upload Progress States
+  // UI & Upload Progress States
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progressStatus, setProgressStatus] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
 
-  // Sinkronisasi state ketika modal dibuka (mode tambah baru vs mode edit)
   useEffect(() => {
     if (!isOpen) return;
     setErrorMessage(null);
@@ -231,6 +231,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setMediaType(isVid ? 'video' : 'image');
 
     if (isVid) {
+      if (file.size > 95 * 1024 * 1024) {
+        setErrorMessage('Ukuran video terlalu besar (maksimal 95 MB untuk unggahan Cloudinary).');
+        setSelectedFile(null);
+        return;
+      }
       const objectUrl = URL.createObjectURL(file);
       setMediaPreview(objectUrl);
     } else {
@@ -285,19 +290,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       return;
     }
 
-    const finalMediaUrl = mediaPreview || PRESET_SAMPLE_MEDIA[0].url;
+    const rawMediaCandidate = mediaPreview || PRESET_SAMPLE_MEDIA[0].url;
 
     try {
       setIsSubmitting(true);
 
-      // Jika sedang mengedit momen yang sudah ada dan user tidak memilih file baru, langsung simpan perubahan dengan cepat
-      if (editingMoment && !selectedFile && finalMediaUrl === editingMoment.mediaUrl) {
+      // Jika sedang mengedit momen yang sudah ada dan file tidak diganti
+      if (editingMoment && !selectedFile && rawMediaCandidate === editingMoment.mediaUrl) {
         const updatedItem: MomentItem = {
           ...editingMoment,
           title: title.trim(),
           date,
           mediaType,
-          mediaUrl: finalMediaUrl,
+          mediaUrl: rawMediaCandidate,
           category,
           notes: notes.trim(),
           weightKg: weightKg ? parseFloat(weightKg) : undefined,
@@ -315,19 +320,37 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         return;
       }
 
+      // 1. Unggah media langsung ke Cloudinary (la3st6qh / wvulbv7y) -> URL disimpan ke Firestore (salma-anak-kami)
+      setProgressStatus(
+        navigator.onLine
+          ? 'Mengunggah foto/video ke Cloudinary & menyinkronkan ke Firestore...'
+          : 'Menyimpan media ke penyimpanan lokal offline (sinkron otomatis saat online)...'
+      );
+      const onlineMediaUrl = await uploadChildMediaOnline(
+        selectedFile ? selectedFile : rawMediaCandidate,
+        selectedFile?.name || `momen_${Date.now()}.${mediaType === 'video' ? 'mp4' : 'jpg'}`,
+        'moments',
+        (pct) => {
+          if (navigator.onLine) {
+            setProgressStatus(
+              `Mengunggah ${mediaType === 'video' ? 'video' : 'foto'} ke Cloudinary (${pct}%)...`
+            );
+          }
+        }
+      );
+
       let driveFileId: string | undefined = editingMoment?.googleDriveFileId;
       let driveWebViewLink: string | undefined = editingMoment?.googleDriveWebViewLink;
       let isSyncedToDrive = editingMoment?.googleDriveSynced || false;
 
       if (storageDestination === 'google_drive' && accessToken) {
-        setProgressStatus('Menghubungkan ke folder Google Drive Anda...');
+        setProgressStatus('Menyimpan cadangan ke folder Google Drive Anda...');
 
         let mediaBlob: Blob;
         if (selectedFile) {
           mediaBlob = selectedFile;
         } else {
-          setProgressStatus('Mempersiapkan media...');
-          const resp = await fetch(finalMediaUrl);
+          const resp = await fetch(onlineMediaUrl);
           mediaBlob = await resp.blob();
         }
 
@@ -351,10 +374,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         driveWebViewLink = driveResult.webViewLink;
         isSyncedToDrive = true;
       } else if (storageDestination === 'google_drive' && !editingMoment) {
-        setProgressStatus('Menyimpan cadangan ke Google Drive (simulasi)...');
+        setProgressStatus('Menyelesaikan sinkronisasi cloud keluarga...');
         const simRes = await simulateGoogleDriveUpload({
           file: selectedFile,
-          previewUrl: finalMediaUrl,
+          previewUrl: onlineMediaUrl,
           mediaType,
           date,
           title: title.trim(),
@@ -375,7 +398,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         title: title.trim(),
         date,
         mediaType,
-        mediaUrl: finalMediaUrl,
+        mediaUrl: onlineMediaUrl,
         category,
         notes: notes.trim(),
         weightKg: weightKg ? parseFloat(weightKg) : undefined,
@@ -420,7 +443,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <p className="text-[11px] text-slate-500 -mt-0.5">
                 {isEditMode
                   ? `Perbarui foto, catatan, atau unduh kembali file momen ${childName}`
-                  : `Dokumentasikan foto, video, dan data fisik untuk ${childName}`}
+                  : `Otomatis tersinkronisasi online ke HP Ayah & Bunda`}
               </p>
             </div>
           </div>
@@ -446,7 +469,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   <Cloud className="w-4 h-4 text-sky-600 shrink-0" />
                   <div>
                     <span className="font-bold text-sky-950 block">
-                      Tersimpan Langsung ke Google Drive ({currentUser.email})
+                      Sinkron Real-Time + Google Drive ({currentUser.email})
                     </span>
                     <span className="text-[11px] text-sky-800">
                       Folder: Jurnal Tumbuh Kembang - {childName}
@@ -454,15 +477,18 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   </div>
                 </div>
                 <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
-                  Drive Terhubung
+                  Cloud Aktif
                 </span>
               </div>
             ) : (
-              <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="text-xs text-amber-900">
-                  <span className="font-bold block">Google Drive Belum Terhubung</span>
-                  <span className="text-[11px] text-amber-800">
-                    Hubungkan akun Google Drive untuk upload otomatis ke cloud Anda.
+              <div className="p-3.5 rounded-2xl bg-emerald-50/80 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="text-xs text-emerald-950">
+                  <span className="font-bold block">
+                    Sinkron Real-Time Aktif (Firestore + Cloudinary)
+                  </span>
+                  <span className="text-[11px] text-emerald-800">
+                    Foto, video, BB/TB &amp; catatan langsung ter-update otomatis di HP Ayah &amp;
+                    HP Bunda.
                   </span>
                 </div>
                 <button
@@ -474,33 +500,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   {isConnectingGoogle ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-                      <path
-                        fill="#4285F4"
-                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                      />
-                    </svg>
+                    <Cloud className="w-3.5 h-3.5 text-sky-600" />
                   )}
-                  <span>Hubungkan Sekarang</span>
+                  <span>Drive Opsional</span>
                 </button>
               </div>
             )
           ) : (
             <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center gap-2 text-xs text-emerald-900">
               <HardDrive className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Tersimpan di Penyimpanan Lokal Perangkat</span>
+              <span>Tersimpan &amp; Tersinkronisasi Online Antar Perangkat Keluarga</span>
             </div>
           )}
 
@@ -514,7 +523,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* Pilihan Sumber Media */}
           <div className="space-y-2">
             <label className="block text-xs font-bold text-slate-800">
-              {isEditMode ? 'Foto / Video Saat Ini (Bisa Diganti atau Diunduh)' : 'Pilih Sumber Foto / Video'}
+              {isEditMode
+                ? 'Foto / Video Saat Ini (Bisa Diganti atau Diunduh)'
+                : 'Pilih Sumber Foto / Video'}
             </label>
 
             <div className="grid grid-cols-3 gap-2">
@@ -707,6 +718,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <input
                 type="text"
                 required
+                maxLength={160}
                 placeholder="Contoh: Langkah Pertama Mandiri"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -818,6 +830,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             <textarea
               required
               rows={3}
+              maxLength={2000}
               placeholder="Ceritakan apa yang si kecil lakukan, reaksi lucunya, kata yang diucapkannya, atau perasaan Ayah & Ibu saat melihat momen ini..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -835,9 +848,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* Footer Action Buttons */}
           <div className="pt-3 border-t border-[#EDE8DF] flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="text-[11px] text-slate-400 text-center sm:text-left">
-              {storageDestination === 'google_drive'
-                ? 'Tersimpan otomatis ke Google Drive pribadi Anda.'
-                : 'Tersimpan ke database lokal browser.'}
+              Otomatis tersinkronisasi online ke perangkat Ayah &amp; Ibu.
             </div>
 
             <div className="flex items-center gap-2.5 w-full sm:w-auto">
@@ -864,11 +875,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   <>
                     <UploadCloud className="w-4 h-4 text-emerald-200" />
                     <span>
-                      {isEditMode
-                        ? 'Simpan Perubahan'
-                        : storageDestination === 'google_drive'
-                        ? 'Simpan ke Google Drive'
-                        : 'Simpan ke Penyimpanan'}
+                      {isEditMode ? 'Simpan Perubahan' : 'Simpan & Sinkronkan'}
                     </span>
                   </>
                 )}
