@@ -1,27 +1,23 @@
 import React from 'react';
 import {
   Calendar,
-  Filter,
   Search,
-  Video,
   Image as ImageIcon,
   CheckCircle,
-  Clock,
-  Sparkles,
-  ExternalLink,
   Scale,
   Ruler,
   Plus,
 } from 'lucide-react';
-import type { FilterOptions, MomentCategory, MomentItem } from '../types/index.ts';
+import type { FilterOptions, MomentItem } from '../types/index.ts';
 import { calculateAge, CATEGORY_LABELS, formatDateIndo, formatHeight, formatWeight } from '../utils/growth.ts';
+import { MomentMediaCarousel } from './MomentMediaCarousel.tsx';
 
 interface MomentGalleryProps {
   moments: MomentItem[];
   birthDate: string;
   filter: FilterOptions;
   onFilterChange: (newFilter: FilterOptions) => void;
-  onSelectMoment: (moment: MomentItem) => void;
+  onSelectMoment: (moment: MomentItem, initialSlideIndex?: number) => void;
   onOpenUpload: () => void;
 }
 
@@ -182,34 +178,23 @@ export const MomentGallery: React.FC<MomentGalleryProps> = ({
                 onClick={() => onSelectMoment(item)}
                 className="group bg-[#FFFDF9] rounded-2xl border border-[#EDE8DF] hover:border-slate-300 hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer"
               >
-                {/* Media Thumbnail Container with measured aspect ratio */}
-                <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden">
-                  <img
-                    src={item.mediaUrl}
-                    alt={item.title}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src =
-                        'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" fill="%23f1f5f9"><rect width="400" height="300" fill="%23f8fafc"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2394a3b8">Foto Momen</text></svg>';
-                    }}
-                  />
-
+                {/* Swipeable Multi-Photo Media Carousel */}
+                <MomentMediaCarousel
+                  moment={item}
+                  aspectClassName="aspect-[4/3]"
+                  imageClassName="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
+                  onTapSlide={(slideIdx) => onSelectMoment(item, slideIdx)}
+                >
                   {/* Gradient Scrim for subtle contrast */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10 opacity-70 group-hover:opacity-90 transition-opacity" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10 opacity-70 group-hover:opacity-90 transition-opacity pointer-events-none" />
 
                   {/* Badges Overlay */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
+                  <div className="absolute top-3 left-3 right-12 flex items-center justify-between pointer-events-none z-10">
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-white/95 text-slate-800 backdrop-blur-xs shadow-xs">
                       {categoryMeta.label}
                     </span>
 
                     <div className="flex items-center gap-1.5">
-                      {item.mediaType === 'video' && (
-                        <span className="w-6 h-6 rounded-md bg-black/60 text-white backdrop-blur-xs flex items-center justify-center">
-                          <Video className="w-3.5 h-3.5" />
-                        </span>
-                      )}
                       {item.googleDriveSynced && (
                         <span
                           title="Tersinkronisasi ke Google Drive"
@@ -222,10 +207,10 @@ export const MomentGallery: React.FC<MomentGalleryProps> = ({
                   </div>
 
                   {/* Bottom Image Overlay: Age at Moment */}
-                  <div className="absolute bottom-2.5 left-3 text-white text-xs font-semibold drop-shadow-sm flex items-center gap-1.5">
+                  <div className="absolute bottom-2.5 left-10 text-white text-xs font-semibold drop-shadow-sm flex items-center gap-1.5 pointer-events-none z-10">
                     <span>Usia {ageAtMoment.compactLabel}</span>
                   </div>
-                </div>
+                </MomentMediaCarousel>
 
                 {/* Card Content & Father's Notes */}
                 <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between space-y-3">

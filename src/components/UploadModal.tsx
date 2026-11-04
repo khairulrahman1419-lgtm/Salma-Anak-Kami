@@ -13,13 +13,22 @@ import {
   HardDrive,
   Download,
   Edit2,
+  Plus,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
-import type { MomentCategory, MomentItem } from '../types/index.ts';
+import type { MomentCategory, MomentItem, MomentMediaSlide } from '../types/index.ts';
 import { uploadMediaToGoogleDrive } from '../services/googleDriveClient.ts';
 import { uploadChildMediaOnline } from '../services/mediaFirebaseStorage.ts';
 import { simulateGoogleDriveUpload } from '../utils/googleDriveService.ts';
 import { downloadMediaFile } from '../utils/downloadMedia.ts';
+import {
+  getMomentMediaSlides,
+  MAX_MOMENT_MEDIA_ITEMS,
+  readImageAsDataUrl,
+} from '../utils/imageHelper.ts';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -33,6 +42,14 @@ interface UploadModalProps {
   currentUser: User | null;
   accessToken: string | null;
   onConnectGoogle: () => Promise<void>;
+}
+
+interface DraftMomentSlide {
+  id: string;
+  previewUrl: string;
+  mediaType: 'image' | 'video';
+  file?: File;
+  fileName?: string;
 }
 
 const PRESET_SAMPLE_MEDIA = [
@@ -56,46 +73,6 @@ const PRESET_SAMPLE_MEDIA = [
   },
 ];
 
-function compressImageToDataUrl(file: File, maxDimension = 1200, quality = 0.84): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Gagal membaca file gambar.'));
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const img = new Image();
-      img.onerror = () => resolve(dataUrl);
-      img.onload = () => {
-        try {
-          let { width, height } = img;
-          if (width > maxDimension || height > maxDimension) {
-            if (width >= height) {
-              height = Math.round((height * maxDimension) / width);
-              width = maxDimension;
-            } else {
-              width = Math.round((width * maxDimension) / height);
-              height = maxDimension;
-            }
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(dataUrl);
-            return;
-          }
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        } catch {
-          resolve(dataUrl);
-        }
-      };
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 export const UploadModal: React.FC<UploadModalProps> = ({
   isOpen,
   onClose,
@@ -111,6 +88,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 }) => {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  const previewScrollerRef = useRef<HTMLDivElement>(null);
   const [showStoragePicker, setShowStoragePicker] = useState(false);
 
   const isEditMode = Boolean(editingMoment);
@@ -121,9 +99,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [category, setCategory] = useState<MomentCategory>(
     initialMode === 'milestone' ? 'milestone_fisik' : 'bermain'
   );
-  const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
-  const [mediaPreview, setMediaPreview] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [draftSlides, setDraftSlides] = useState<DraftMomentSlide[]>([]);
+  const [activeSlideIdx, setActiveSlideIdx] = useState(0);
 
   // Growth Measurements
   const [weightKg, setWeightKg] = useState<string>('');
@@ -142,15 +119,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     if (!isOpen) return;
     setErrorMessage(null);
     setProgressStatus(null);
-    setSelectedFile(null);
     setShowStoragePicker(false);
+    setActiveSlideIdx(0);
 
     if (editingMoment) {
       setTitle(editingMoment.title);
       setDate(editingMoment.date);
       setCategory(editingMoment.category);
-      setMediaType(editingMoment.mediaType);
-      setMediaPreview(editingMoment.mediaUrl);
+      const existingSlides = getMomentMediaSlides(editingMoment).map((s) => ({
+        id: s.id,
+        previewUrl: s.url,
+        mediaType: s.mediaType,
+      }));
+      setDraftSlides(existingSlides);
       setWeightKg(editingMoment.weightKg !== undefined ? String(editingMoment.weightKg) : '');
       setHeightCm(editingMoment.heightCm !== undefined ? String(editingMoment.heightCm) : '');
       setHeadCircumferenceCm(
@@ -163,8 +144,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setTitle('');
       setDate(new Date().toISOString().slice(0, 10));
       setCategory(initialMode === 'milestone' ? 'milestone_fisik' : 'bermain');
-      setMediaType('image');
-      setMediaPreview(null);
+      setDraftSlides([]);
       setWeightKg('');
       setHeightCm('');
       setHeadCircumferenceCm('');
@@ -174,13 +154,40 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   if (!isOpen) return null;
 
+  const safeActiveIdx =
+    draftSlides.length > 0 ? Math.min(activeSlideIdx, draftSlides.length - 1) : 0;
+  const activeSlide = draftSlides[safeActiveIdx];
+  const remainingSlots = Math.max(0, MAX_MOMENT_MEDIA_ITEMS - draftSlides.length);
+
+  const scrollToPreviewSlide = (targetIdx: number) => {
+    if (draftSlides.length === 0) return;
+    const clamped = Math.max(0, Math.min(draftSlides.length - 1, targetIdx));
+    setActiveSlideIdx(clamped);
+    const scroller = previewScrollerRef.current;
+    if (scroller && scroller.clientWidth > 0) {
+      scroller.scrollTo({
+        left: clamped * scroller.clientWidth,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  const handlePreviewScroll = () => {
+    const scroller = previewScrollerRef.current;
+    if (!scroller || scroller.clientWidth <= 0) return;
+    const idx = Math.round(scroller.scrollLeft / scroller.clientWidth);
+    const clamped = Math.max(0, Math.min(draftSlides.length - 1, idx));
+    if (clamped !== activeSlideIdx) {
+      setActiveSlideIdx(clamped);
+    }
+  };
+
   const resetForm = () => {
     setTitle('');
     setDate(new Date().toISOString().slice(0, 10));
     setCategory(initialMode === 'milestone' ? 'milestone_fisik' : 'bermain');
-    setMediaType('image');
-    setMediaPreview(null);
-    setSelectedFile(null);
+    setDraftSlides([]);
+    setActiveSlideIdx(0);
     setWeightKg('');
     setHeightCm('');
     setHeadCircumferenceCm('');
@@ -212,51 +219,102 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      void handleFileSelected(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      void handleFilesSelected(Array.from(e.dataTransfer.files));
     }
   };
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      void handleFileSelected(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      void handleFilesSelected(Array.from(e.target.files));
     }
     e.target.value = '';
   };
 
-  const handleFileSelected = async (file: File) => {
-    setSelectedFile(file);
+  const handleFilesSelected = async (files: File[]) => {
     setErrorMessage(null);
-    const isVid = file.type.startsWith('video/');
-    setMediaType(isVid ? 'video' : 'image');
+    if (remainingSlots <= 0) {
+      setErrorMessage(`Maksimal ${MAX_MOMENT_MEDIA_ITEMS} foto/video dalam satu momen swipe.`);
+      return;
+    }
 
-    if (isVid) {
-      if (file.size > 95 * 1024 * 1024) {
+    const acceptedFiles = files.slice(0, remainingSlots);
+    const newSlides: DraftMomentSlide[] = [];
+    const now = Date.now();
+
+    for (let i = 0; i < acceptedFiles.length; i++) {
+      const file = acceptedFiles[i];
+      const isVid = file.type.startsWith('video/');
+
+      if (isVid && file.size > 95 * 1024 * 1024) {
         setErrorMessage('Ukuran video terlalu besar (maksimal 95 MB untuk unggahan Cloudinary).');
-        setSelectedFile(null);
-        return;
+        continue;
       }
-      const objectUrl = URL.createObjectURL(file);
-      setMediaPreview(objectUrl);
-    } else {
-      try {
-        const persistentDataUrl = await compressImageToDataUrl(file);
-        setMediaPreview(persistentDataUrl);
-      } catch {
-        setMediaPreview(URL.createObjectURL(file));
+
+      if (isVid) {
+        newSlides.push({
+          id: `slide_${now}_${i}`,
+          previewUrl: URL.createObjectURL(file),
+          mediaType: 'video',
+          file,
+          fileName: file.name,
+        });
+      } else {
+        try {
+          const persistentDataUrl = await readImageAsDataUrl(file, 1200, 0.84);
+          newSlides.push({
+            id: `slide_${now}_${i}`,
+            previewUrl: persistentDataUrl,
+            mediaType: 'image',
+            file,
+            fileName: file.name,
+          });
+        } catch {
+          newSlides.push({
+            id: `slide_${now}_${i}`,
+            previewUrl: URL.createObjectURL(file),
+            mediaType: 'image',
+            file,
+            fileName: file.name,
+          });
+        }
       }
     }
 
-    if (!title.trim()) {
-      const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+    if (newSlides.length === 0) return;
+
+    setDraftSlides((prev) => {
+      const combined = [...prev, ...newSlides].slice(0, MAX_MOMENT_MEDIA_ITEMS);
+      const nextFocusIdx = prev.length;
+      requestAnimationFrame(() => {
+        scrollToPreviewSlide(Math.min(nextFocusIdx, combined.length - 1));
+      });
+      return combined;
+    });
+
+    if (!title.trim() && acceptedFiles[0]) {
+      const cleanName = acceptedFiles[0].name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
       setTitle(cleanName.charAt(0).toUpperCase() + cleanName.slice(1));
     }
   };
 
+  const handleRemoveDraftSlide = (slideId: string) => {
+    setDraftSlides((prev) => {
+      const next = prev.filter((s) => s.id !== slideId);
+      setActiveSlideIdx((curr) => Math.max(0, Math.min(curr, next.length - 1)));
+      return next;
+    });
+  };
+
   const handleSelectPreset = (preset: (typeof PRESET_SAMPLE_MEDIA)[0]) => {
-    setMediaPreview(preset.url);
-    setSelectedFile(null);
-    setMediaType('image');
+    if (remainingSlots <= 0) return;
+    const presetSlide: DraftMomentSlide = {
+      id: `preset_${Date.now()}`,
+      previewUrl: preset.url,
+      mediaType: 'image',
+      fileName: preset.name,
+    };
+    setDraftSlides((prev) => [...prev, presetSlide].slice(0, MAX_MOMENT_MEDIA_ITEMS));
     setCategory(preset.category);
     setErrorMessage(null);
     if (!title.trim()) setTitle(preset.defaultTitle);
@@ -290,54 +348,97 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       return;
     }
 
-    const rawMediaCandidate = mediaPreview || PRESET_SAMPLE_MEDIA[0].url;
+    const effectiveDrafts: DraftMomentSlide[] =
+      draftSlides.length > 0
+        ? draftSlides
+        : [
+            {
+              id: `default_${Date.now()}`,
+              previewUrl: PRESET_SAMPLE_MEDIA[0].url,
+              mediaType: 'image',
+            },
+          ];
 
     try {
       setIsSubmitting(true);
 
-      // Jika sedang mengedit momen yang sudah ada dan file tidak diganti
-      if (editingMoment && !selectedFile && rawMediaCandidate === editingMoment.mediaUrl) {
-        const updatedItem: MomentItem = {
-          ...editingMoment,
-          title: title.trim(),
-          date,
-          mediaType,
-          mediaUrl: rawMediaCandidate,
-          category,
-          notes: notes.trim(),
-          weightKg: weightKg ? parseFloat(weightKg) : undefined,
-          heightCm: heightCm ? parseFloat(heightCm) : undefined,
-          headCircumferenceCm: headCircumferenceCm ? parseFloat(headCircumferenceCm) : undefined,
-        };
+      // Cek apakah dalam mode edit tidak ada perubahan slide baru
+      if (editingMoment) {
+        const originalSlides = getMomentMediaSlides(editingMoment);
+        const unchangedSlides =
+          effectiveDrafts.length === originalSlides.length &&
+          effectiveDrafts.every(
+            (d, i) =>
+              !d.file &&
+              d.previewUrl === originalSlides[i]?.url &&
+              d.mediaType === originalSlides[i]?.mediaType
+          );
 
-        if (onUpdateMoment) {
-          onUpdateMoment(updatedItem);
-        } else {
-          onSaveMoment(updatedItem);
+        if (unchangedSlides) {
+          const updatedItem: MomentItem = {
+            ...editingMoment,
+            title: title.trim(),
+            date,
+            mediaType: effectiveDrafts[0].mediaType,
+            mediaUrl: effectiveDrafts[0].previewUrl,
+            mediaItems: effectiveDrafts.map((d) => ({
+              id: d.id,
+              url: d.previewUrl,
+              mediaType: d.mediaType,
+            })),
+            category,
+            notes: notes.trim(),
+            weightKg: weightKg ? parseFloat(weightKg) : undefined,
+            heightCm: heightCm ? parseFloat(heightCm) : undefined,
+            headCircumferenceCm: headCircumferenceCm ? parseFloat(headCircumferenceCm) : undefined,
+          };
+
+          if (onUpdateMoment) {
+            onUpdateMoment(updatedItem);
+          } else {
+            onSaveMoment(updatedItem);
+          }
+          resetForm();
+          onClose();
+          return;
         }
-        resetForm();
-        onClose();
-        return;
       }
 
-      // 1. Unggah media langsung ke Cloudinary (la3st6qh / wvulbv7y) -> URL disimpan ke Firestore (salma-anak-kami)
-      setProgressStatus(
-        navigator.onLine
-          ? 'Mengunggah foto/video ke Cloudinary & menyinkronkan ke Firestore...'
-          : 'Menyimpan media ke penyimpanan lokal offline (sinkron otomatis saat online)...'
-      );
-      const onlineMediaUrl = await uploadChildMediaOnline(
-        selectedFile ? selectedFile : rawMediaCandidate,
-        selectedFile?.name || `momen_${Date.now()}.${mediaType === 'video' ? 'mp4' : 'jpg'}`,
-        'moments',
-        (pct) => {
-          if (navigator.onLine) {
-            setProgressStatus(
-              `Mengunggah ${mediaType === 'video' ? 'video' : 'foto'} ke Cloudinary (${pct}%)...`
-            );
+      // 1. Unggah seluruh slide foto/video ke Cloudinary (la3st6qh / wvulbv7y)
+      const uploadedSlides: MomentMediaSlide[] = [];
+      for (let i = 0; i < effectiveDrafts.length; i++) {
+        const slide = effectiveDrafts[i];
+        const slideLabel =
+          effectiveDrafts.length > 1 ? ` (${i + 1}/${effectiveDrafts.length})` : '';
+
+        setProgressStatus(
+          navigator.onLine
+            ? `Mengunggah foto/video${slideLabel} ke Cloudinary & Firestore...`
+            : `Menyimpan media${slideLabel} ke penyimpanan lokal offline...`
+        );
+
+        const onlineUrl = await uploadChildMediaOnline(
+          slide.file ? slide.file : slide.previewUrl,
+          slide.fileName ||
+            `momen_${Date.now()}_${i + 1}.${slide.mediaType === 'video' ? 'mp4' : 'jpg'}`,
+          'moments',
+          (pct) => {
+            if (navigator.onLine) {
+              setProgressStatus(
+                `Mengunggah ${slide.mediaType === 'video' ? 'video' : 'foto'}${slideLabel} ke Cloudinary (${pct}%)...`
+              );
+            }
           }
-        }
-      );
+        );
+
+        uploadedSlides.push({
+          id: slide.id || `slide_${Date.now()}_${i + 1}`,
+          url: onlineUrl,
+          mediaType: slide.mediaType,
+        });
+      }
+
+      const coverSlide = uploadedSlides[0];
 
       let driveFileId: string | undefined = editingMoment?.googleDriveFileId;
       let driveWebViewLink: string | undefined = editingMoment?.googleDriveWebViewLink;
@@ -347,10 +448,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         setProgressStatus('Menyimpan cadangan ke folder Google Drive Anda...');
 
         let mediaBlob: Blob;
-        if (selectedFile) {
-          mediaBlob = selectedFile;
+        if (effectiveDrafts[0].file) {
+          mediaBlob = effectiveDrafts[0].file;
         } else {
-          const resp = await fetch(onlineMediaUrl);
+          const resp = await fetch(coverSlide.url);
           mediaBlob = await resp.blob();
         }
 
@@ -376,9 +477,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       } else if (storageDestination === 'google_drive' && !editingMoment) {
         setProgressStatus('Menyelesaikan sinkronisasi cloud keluarga...');
         const simRes = await simulateGoogleDriveUpload({
-          file: selectedFile,
-          previewUrl: onlineMediaUrl,
-          mediaType,
+          file: effectiveDrafts[0].file || null,
+          previewUrl: coverSlide.url,
+          mediaType: coverSlide.mediaType,
           date,
           title: title.trim(),
           category,
@@ -397,8 +498,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         id: editingMoment ? editingMoment.id : `moment_${Date.now()}`,
         title: title.trim(),
         date,
-        mediaType,
-        mediaUrl: onlineMediaUrl,
+        mediaType: coverSlide.mediaType,
+        mediaUrl: coverSlide.url,
+        mediaItems: uploadedSlides,
         category,
         notes: notes.trim(),
         weightKg: weightKg ? parseFloat(weightKg) : undefined,
@@ -438,12 +540,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                {isEditMode ? 'Edit Momen, Foto & Catatan' : 'Catat Momen & Milestone Baru'}
+                {isEditMode ? 'Edit Momen, Foto Swipe & Catatan' : 'Catat Momen & Foto Swipe Baru'}
               </h2>
               <p className="text-[11px] text-slate-500 -mt-0.5">
                 {isEditMode
-                  ? `Perbarui foto, catatan, atau unduh kembali file momen ${childName}`
-                  : `Otomatis tersinkronisasi online ke HP Ayah & Bunda`}
+                  ? `Tambah/hapus slide foto, perbarui catatan, atau unduh kembali foto ${childName}`
+                  : `Bisa pilih banyak foto sekaligus untuk di-swipe ke samping`}
               </p>
             </div>
           </div>
@@ -487,7 +589,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     Sinkron Real-Time Aktif (Firestore + Cloudinary)
                   </span>
                   <span className="text-[11px] text-emerald-800">
-                    Foto, video, BB/TB &amp; catatan langsung ter-update otomatis di HP Ayah &amp;
+                    Semua slide foto, video, BB/TB &amp; catatan langsung ter-update di HP Ayah &amp;
                     HP Bunda.
                   </span>
                 </div>
@@ -520,37 +622,54 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
 
-          {/* Pilihan Sumber Media */}
-          <div className="space-y-2">
-            <label className="block text-xs font-bold text-slate-800">
-              {isEditMode
-                ? 'Foto / Video Saat Ini (Bisa Diganti atau Diunduh)'
-                : 'Pilih Sumber Foto / Video'}
-            </label>
+          {/* Pilihan Sumber Media (Mendukung Multi-Upload untuk Swipe) */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <label className="block text-xs font-bold text-slate-800">
+                {draftSlides.length > 0
+                  ? `Foto / Video Momen (${draftSlides.length}/${MAX_MOMENT_MEDIA_ITEMS} Slide — Bisa Geser ke Samping)`
+                  : 'Pilih Foto / Video (Bisa Pilih Lebih dari 1 untuk Swipe)'}
+              </label>
+
+              {draftSlides.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftSlides([]);
+                    setActiveSlideIdx(0);
+                  }}
+                  className="text-[11px] font-semibold text-rose-600 hover:underline cursor-pointer"
+                >
+                  Hapus Semua
+                </button>
+              )}
+            </div>
 
             <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
+                disabled={remainingSlots <= 0}
                 onClick={() => cameraInputRef.current?.click()}
-                className="flex flex-col items-center justify-center gap-1.5 p-2.5 rounded-2xl bg-emerald-50 hover:bg-emerald-100/80 active:bg-emerald-200 border border-emerald-200 text-emerald-900 transition-all cursor-pointer shadow-2xs text-center"
+                className="flex flex-col items-center justify-center gap-1.5 p-2.5 rounded-2xl bg-emerald-50 hover:bg-emerald-100/80 active:bg-emerald-200 disabled:opacity-50 border border-emerald-200 text-emerald-900 transition-all cursor-pointer shadow-2xs text-center"
               >
                 <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs">
                   <Camera className="w-4 h-4" />
                 </div>
                 <span className="text-[11px] font-bold">Kamera HP</span>
-                <span className="text-[9px] text-emerald-700">Jepret Langsung</span>
+                <span className="text-[9px] text-emerald-700">Jepret &amp; Tambah</span>
               </button>
 
               <button
                 type="button"
+                disabled={remainingSlots <= 0}
                 onClick={() => galleryInputRef.current?.click()}
-                className="flex flex-col items-center justify-center gap-1.5 p-2.5 rounded-2xl bg-sky-50 hover:bg-sky-100/80 active:bg-sky-200 border border-sky-200 text-sky-900 transition-all cursor-pointer shadow-2xs text-center"
+                className="flex flex-col items-center justify-center gap-1.5 p-2.5 rounded-2xl bg-sky-50 hover:bg-sky-100/80 active:bg-sky-200 disabled:opacity-50 border border-sky-200 text-sky-900 transition-all cursor-pointer shadow-2xs text-center"
               >
                 <div className="w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center shadow-xs">
                   <ImageIcon className="w-4 h-4" />
                 </div>
                 <span className="text-[11px] font-bold">Galeri HP</span>
-                <span className="text-[9px] text-sky-700">Pilih dari Album</span>
+                <span className="text-[9px] text-sky-700">Pilih Banyak Foto</span>
               </button>
 
               <button
@@ -582,6 +701,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               ref={galleryInputRef}
               type="file"
               accept="image/*,video/*"
+              multiple
               onChange={handleFileChange}
               className="hidden"
             />
@@ -591,7 +711,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
                     <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    Pilih Foto dari Storage Aplikasi &amp; Contoh Album:
+                    Ketuk untuk menambahkan ke slide momen:
                   </span>
                   <button
                     type="button"
@@ -606,10 +726,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     <button
                       key={idx}
                       type="button"
-                      onClick={() => {
-                        handleSelectPreset(preset);
-                        setShowStoragePicker(false);
-                      }}
+                      onClick={() => handleSelectPreset(preset)}
                       className="group relative rounded-xl overflow-hidden border-2 border-transparent hover:border-emerald-500 text-left bg-white shadow-2xs cursor-pointer transition-all"
                     >
                       <img
@@ -626,83 +743,186 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </div>
             )}
 
-            {/* Area Drag and Drop / Preview Media + Tombol Unduh */}
+            {/* Area Drag & Drop / Live Swipeable Carousel Preview */}
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              onClick={() => galleryInputRef.current?.click()}
-              className={`relative border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all duration-200 ${
+              onClick={() => {
+                if (draftSlides.length === 0) {
+                  galleryInputRef.current?.click();
+                }
+              }}
+              className={`relative border-2 border-dashed rounded-2xl p-3.5 transition-all duration-200 ${
                 isDragging
                   ? 'border-emerald-500 bg-emerald-50/50'
-                  : mediaPreview
+                  : draftSlides.length > 0
                   ? 'border-emerald-300 bg-emerald-50/20'
-                  : 'border-slate-300 hover:border-slate-400 bg-[#FAF8F5]'
+                  : 'border-slate-300 hover:border-slate-400 bg-[#FAF8F5] cursor-pointer text-center'
               }`}
             >
-              {mediaPreview ? (
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                  <div className="flex flex-col sm:flex-row items-center gap-3">
-                    <div className="w-24 h-20 rounded-xl overflow-hidden bg-slate-100 shrink-0 border border-slate-200 shadow-xs">
-                      {mediaType === 'video' ? (
-                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-white text-xs">
-                          <Video className="w-5 h-5 mb-1 text-sky-400" />
-                          <span className="text-[10px]">Video Terpilih</span>
+              {draftSlides.length > 0 && activeSlide ? (
+                <div className="space-y-3">
+                  {/* Live Horizontal Swipe Stage */}
+                  <div className="relative rounded-2xl overflow-hidden bg-slate-900 aspect-[16/10] sm:aspect-[16/9] select-none">
+                    <div
+                      ref={previewScrollerRef}
+                      onScroll={draftSlides.length > 1 ? handlePreviewScroll : undefined}
+                      className={`w-full h-full flex ${
+                        draftSlides.length > 1
+                          ? 'overflow-x-auto snap-x snap-mandatory no-scrollbar scroll-smooth touch-pan-x'
+                          : 'overflow-hidden'
+                      }`}
+                    >
+                      {draftSlides.map((slide, idx) => (
+                        <div
+                          key={slide.id}
+                          className="w-full h-full shrink-0 snap-center snap-always flex items-center justify-center relative"
+                        >
+                          {slide.mediaType === 'video' ? (
+                            <video
+                              src={slide.previewUrl}
+                              controls
+                              playsInline
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <img
+                              src={slide.previewUrl}
+                              alt={`Slide ${idx + 1}`}
+                              draggable={false}
+                              className="w-full h-full object-contain"
+                            />
+                          )}
                         </div>
-                      ) : (
-                        <img
-                          src={mediaPreview}
-                          alt="Preview"
-                          className="w-full h-full object-cover"
-                        />
-                      )}
+                      ))}
                     </div>
-                    <div className="text-center sm:text-left space-y-0.5">
-                      <p className="text-xs font-bold text-slate-800">
-                        {selectedFile
-                          ? selectedFile.name
-                          : isEditMode
-                          ? 'File Foto / Video Tersimpan'
-                          : 'Media Siap Disimpan'}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        Ketuk tombol Kamera atau Galeri di atas jika ingin mengganti file
-                      </p>
-                      <span className="inline-block text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
-                        ✓ Media Tersedia
-                      </span>
+
+                    {/* Slide Counter Top-Left */}
+                    <div className="absolute top-2.5 left-2.5 z-10 bg-black/65 backdrop-blur-xs text-white text-[11px] font-bold px-2.5 py-1 rounded-full tabular-nums">
+                      Slide {safeActiveIdx + 1} / {draftSlides.length}
                     </div>
+
+                    {/* Top-Right Actions on Active Slide: Unduh & Hapus Slide */}
+                    <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void downloadMediaFile(
+                            activeSlide.previewUrl,
+                            `${title || `momen-${childName}`}-${safeActiveIdx + 1}`,
+                            activeSlide.mediaType
+                          );
+                        }}
+                        title="Unduh slide ini"
+                        className="px-2.5 py-1.5 rounded-xl bg-black/60 hover:bg-black/80 text-white text-[11px] font-bold inline-flex items-center gap-1 backdrop-blur-xs cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-emerald-300" />
+                        <span>Unduh</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveDraftSlide(activeSlide.id);
+                        }}
+                        title="Hapus slide ini"
+                        className="w-8 h-8 rounded-xl bg-rose-600/80 hover:bg-rose-600 text-white flex items-center justify-center backdrop-blur-xs cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Left / Right Swipe Arrows */}
+                    {draftSlides.length > 1 && safeActiveIdx > 0 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          scrollToPreviewSlide(safeActiveIdx - 1);
+                        }}
+                        aria-label="Slide sebelumnya"
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-black/55 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-xs cursor-pointer"
+                      >
+                        <ChevronLeft className="w-4.5 h-4.5" />
+                      </button>
+                    )}
+
+                    {draftSlides.length > 1 && safeActiveIdx < draftSlides.length - 1 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          scrollToPreviewSlide(safeActiveIdx + 1);
+                        }}
+                        aria-label="Slide berikutnya"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-black/55 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-xs cursor-pointer"
+                      >
+                        <ChevronRight className="w-4.5 h-4.5" />
+                      </button>
+                    )}
                   </div>
 
-                  {/* Tombol Download File Langsung dari Modal */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void downloadMediaFile(
-                        mediaPreview,
-                        title || `momen-${childName}`,
-                        mediaType
+                  {/* Thumbnail Strip + "+ Tambah Foto" Button */}
+                  <div className="flex items-center gap-2 overflow-x-auto pb-0.5 no-scrollbar">
+                    {draftSlides.map((slide, idx) => {
+                      const isActive = idx === safeActiveIdx;
+                      return (
+                        <button
+                          key={slide.id}
+                          type="button"
+                          onClick={() => scrollToPreviewSlide(idx)}
+                          className={`relative w-13 h-13 rounded-xl overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
+                            isActive
+                              ? 'border-emerald-600 scale-103 shadow-xs'
+                              : 'border-slate-200 opacity-70 hover:opacity-100'
+                          }`}
+                        >
+                          {slide.mediaType === 'video' ? (
+                            <div className="w-full h-full bg-slate-900 text-white flex items-center justify-center">
+                              <Video className="w-4 h-4 text-sky-400" />
+                            </div>
+                          ) : (
+                            <img
+                              src={slide.previewUrl}
+                              alt={`Thumb ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                          )}
+                          <span className="absolute bottom-0.5 right-1 text-[9px] font-extrabold text-white bg-black/60 px-1 rounded tabular-nums">
+                            {idx + 1}
+                          </span>
+                        </button>
                       );
-                    }}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 text-xs font-bold shadow-2xs transition-colors cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5 text-teal-600" />
-                    <span>Unduh File</span>
-                  </button>
+                    })}
+
+                    {remainingSlots > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => galleryInputRef.current?.click()}
+                        title="Tambah foto/video lagi agar bisa di-swipe ke samping"
+                        className="w-13 h-13 rounded-xl border-2 border-dashed border-emerald-400 bg-white hover:bg-emerald-50 text-emerald-700 flex flex-col items-center justify-center gap-0.5 shrink-0 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span className="text-[9px] font-bold">Tambah</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               ) : (
-                <div className="py-2 space-y-1">
+                <div className="py-3 space-y-1">
                   <div className="w-10 h-10 mx-auto rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center">
                     <UploadCloud className="w-5 h-5 text-emerald-600" />
                   </div>
                   <div className="text-xs text-slate-700">
                     <span className="font-semibold text-emerald-700">
-                      Ketuk di sini atau tombol di atas
+                      Ketuk di sini untuk memilih 1 atau beberapa foto sekaligus
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-400">
-                    Mendukung JPG, PNG, WEBP, MP4, MOV
+                    Foto yang dipilih lebih dari 1 otomatis bisa di-swipe ke samping (JPG, PNG, WEBP, MP4)
                   </p>
                 </div>
               )}

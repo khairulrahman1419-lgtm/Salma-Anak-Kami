@@ -3,12 +3,11 @@ import {
   LayoutGrid,
   Layers,
   Plus,
-  Video,
   CheckCircle2,
   Download,
   Edit2,
 } from 'lucide-react';
-import type { MomentItem } from '../types/index.ts';
+import type { MomentItem, MomentMediaSlide } from '../types/index.ts';
 import {
   calculateAge,
   CATEGORY_LABELS,
@@ -17,13 +16,14 @@ import {
   formatWeight,
 } from '../utils/growth.ts';
 import { Clothespin } from './Clothespin.tsx';
+import { MomentMediaCarousel } from './MomentMediaCarousel.tsx';
 
 interface CollageGalleryProps {
   moments: MomentItem[];
   birthDate: string;
-  onSelectMoment: (moment: MomentItem) => void;
+  onSelectMoment: (moment: MomentItem, initialSlideIndex?: number) => void;
   onEditMoment: (moment: MomentItem) => void;
-  onDownloadMoment: (moment: MomentItem) => void;
+  onDownloadMoment: (moment: MomentItem, activeSlide?: MomentMediaSlide) => void;
   onOpenUpload: () => void;
 }
 
@@ -97,6 +97,7 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [displayMode, setDisplayMode] = useState<'collage' | 'grid'>('collage');
+  const [activeSlidesMap, setActiveSlidesMap] = useState<Record<string, MomentMediaSlide>>({});
 
   const filteredMoments = moments.filter((m) => {
     if (selectedCategory === 'all') return true;
@@ -123,7 +124,7 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
                 </span>
               </h2>
               <p className="text-[11px] text-slate-500">
-                Ketuk foto untuk kisah lengkap, atau gunakan tombol Edit &amp; Unduh di setiap foto
+                Geser ke samping untuk melihat slide foto pada setiap momen, atau ketuk untuk cerita lengkap
               </p>
             </div>
           </div>
@@ -222,12 +223,12 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
               <span>Koleksi: {activeBoardMeta.label}</span>
               <span className="text-amber-500">·</span>
               <span className="font-normal text-slate-600">
-                {filteredMoments.length} foto berharga
+                {filteredMoments.length} momen berharga
               </span>
             </div>
 
             <span className="text-[11px] text-slate-500 italic">
-              Ketuk foto polaroid untuk membaca cerita, edit, atau mengunduh ulang
+              Geser foto ke samping untuk slide berikutnya, atau ketuk untuk cerita lengkap
             </span>
           </div>
 
@@ -241,7 +242,7 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
               return (
                 <div
                   key={item.id}
-                  onClick={() => onSelectMoment(item)}
+                  onClick={() => onSelectMoment(item, 0)}
                   className={`group relative break-inside-avoid pt-3 transform transition-all duration-300 hover:scale-[1.02] hover:rotate-0 hover:z-30 cursor-pointer ${rotation}`}
                 >
                   {/* Top Clothespin */}
@@ -252,49 +253,30 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
 
                   {/* POLAROID FRAME */}
                   <div className="bg-white p-3.5 pb-4 rounded-3xl shadow-md group-hover:shadow-xl border border-slate-200/80 transition-shadow">
-                    <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-100 border border-slate-100">
-                      {item.mediaType === 'video' ? (
-                        <video
-                          src={item.mediaUrl}
-                          muted
-                          playsInline
-                          preload="metadata"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <img
-                          src={item.mediaUrl}
-                          alt={item.title}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover group-hover:brightness-105 group-hover:scale-102 transition-all duration-300"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src =
-                              'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" fill="%23f1f5f9"><rect width="400" height="300" fill="%23f8fafc"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2394a3b8">Foto Momen</text></svg>';
-                          }}
-                        />
-                      )}
-
+                    <MomentMediaCarousel
+                      moment={item}
+                      aspectClassName="aspect-[4/3] rounded-2xl border border-slate-100"
+                      imageClassName="w-full h-full object-cover group-hover:brightness-105 transition-all duration-300"
+                      onTapSlide={(slideIdx) => onSelectMoment(item, slideIdx)}
+                      onActiveSlideChange={(_idx, slide) =>
+                        setActiveSlidesMap((prev) => ({ ...prev, [item.id]: slide }))
+                      }
+                    >
                       {item.weightKg && (
-                        <div className="absolute top-2.5 right-2.5 bg-slate-900/85 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+                        <div className="absolute top-2.5 right-2.5 z-10 bg-slate-900/85 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full pointer-events-none">
                           {item.weightKg} kg
-                        </div>
-                      )}
-
-                      {item.mediaType === 'video' && (
-                        <div className="absolute top-2.5 left-2.5 w-7 h-7 rounded-lg bg-black/60 text-white flex items-center justify-center backdrop-blur-xs shadow-xs">
-                          <Video className="w-3.5 h-3.5" />
                         </div>
                       )}
 
                       {item.googleDriveSynced && (
                         <div
                           title="Tersimpan di Google Drive"
-                          className="absolute bottom-2 right-2 w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs"
+                          className="absolute bottom-2 right-2 z-10 w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs pointer-events-none"
                         >
                           <CheckCircle2 className="w-3 h-3" />
                         </div>
                       )}
-                    </div>
+                    </MomentMediaCarousel>
 
                     {/* Polaroid Caption & Direct Edit / Download Actions */}
                     <div className="pt-3 px-1 space-y-1.5">
@@ -328,9 +310,9 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              onDownloadMoment(item);
+                              onDownloadMoment(item, activeSlidesMap[item.id]);
                             }}
-                            title="Unduh file foto / video"
+                            title="Unduh file foto / video yang sedang tampil"
                             aria-label="Unduh foto"
                             className="w-7 h-7 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 flex items-center justify-center transition-colors cursor-pointer"
                           >
@@ -366,37 +348,38 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
             return (
               <div
                 key={item.id}
-                onClick={() => onSelectMoment(item)}
+                onClick={() => onSelectMoment(item, 0)}
                 className="group bg-[#FFFDF9] rounded-2xl border border-[#EDE8DF] hover:border-slate-300 hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer"
               >
-                <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden">
-                  {item.mediaType === 'video' ? (
-                    <video
-                      src={item.mediaUrl}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <img
-                      src={item.mediaUrl}
-                      alt={item.title}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
-                    />
-                  )}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
+                <MomentMediaCarousel
+                  moment={item}
+                  aspectClassName="aspect-[4/3]"
+                  imageClassName="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
+                  showCounterBadge={false}
+                  onTapSlide={(slideIdx) => onSelectMoment(item, slideIdx)}
+                  onActiveSlideChange={(_idx, slide) =>
+                    setActiveSlidesMap((prev) => ({ ...prev, [item.id]: slide }))
+                  }
+                >
+                  <div className="absolute top-3 left-3 right-3 z-10 flex items-center justify-between pointer-events-none">
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-white/95 text-slate-800 shadow-xs">
                       {categoryMeta.label}
                     </span>
-                    {item.googleDriveSynced && (
-                      <span className="w-6 h-6 rounded-md bg-emerald-600 text-white flex items-center justify-center shadow-xs">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {item.mediaItems && item.mediaItems.length > 1 && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/65 text-white tabular-nums">
+                          {item.mediaItems.length} Slide
+                        </span>
+                      )}
+                      {item.googleDriveSynced && (
+                        <span className="w-6 h-6 rounded-md bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
+                </MomentMediaCarousel>
+
                 <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
                   <div className="space-y-1">
                     <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -404,7 +387,7 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
                       <span>·</span>
                       <span className="font-semibold text-slate-800">{ageAtMoment.label}</span>
                     </div>
-                    <h3 className="text-sm font-bold text-slate-900 group-hover:text-emerald-700">
+                    <h3 className="text-sm font-bold text-slate-800 group-hover:text-emerald-700">
                       {item.title}
                     </h3>
                     <p className="text-xs text-slate-600 line-clamp-2">"{item.notes}"</p>
@@ -432,7 +415,7 @@ export const CollageGallery: React.FC<CollageGalleryProps> = ({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onDownloadMoment(item);
+                          onDownloadMoment(item, activeSlidesMap[item.id]);
                         }}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-teal-50 text-slate-700 hover:text-teal-700 text-[11px] font-semibold cursor-pointer"
                       >

@@ -37,12 +37,19 @@ export type MomentCategory =
   | 'ulang_tahun'
   | 'lainnya';
 
+export interface MomentMediaSlide {
+  id: string;
+  url: string;
+  mediaType: 'image' | 'video';
+}
+
 export interface MomentItem {
   id: string;
   title: string;
   date: string; // YYYY-MM-DD
   mediaType: 'image' | 'video';
   mediaUrl: string;
+  mediaItems?: MomentMediaSlide[];
   thumbnailUrl?: string;
   category: MomentCategory;
   notes: string;

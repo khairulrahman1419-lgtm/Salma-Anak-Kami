@@ -18,7 +18,6 @@ import {
   Layers,
   Edit2,
   Plus,
-  Video,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import type {
@@ -26,6 +25,7 @@ import type {
   GrowthRecord,
   MilestoneChecklistItem,
   MomentItem,
+  MomentMediaSlide,
   ParentingQuoteItem,
 } from './types/index.ts';
 import {
@@ -80,6 +80,7 @@ import { Clothespin } from './components/Clothespin.tsx';
 import { StorageModal } from './components/StorageModal.tsx';
 import { ContextMenuPopup } from './components/ContextMenuPopup.tsx';
 import { CollageGallery } from './components/CollageGallery.tsx';
+import { MomentMediaCarousel } from './components/MomentMediaCarousel.tsx';
 import { GrowthCharts } from './components/GrowthCharts.tsx';
 import { MilestoneTracker } from './components/MilestoneTracker.tsx';
 import { UploadModal } from './components/UploadModal.tsx';
@@ -130,6 +131,10 @@ export default function App() {
   const [uploadMode, setUploadMode] = useState<'media' | 'milestone'>('media');
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [selectedMoment, setSelectedMoment] = useState<MomentItem | null>(null);
+  const [selectedMomentSlideIndex, setSelectedMomentSlideIndex] = useState<number>(0);
+  const [overviewActiveSlides, setOverviewActiveSlides] = useState<
+    Record<string, MomentMediaSlide>
+  >({});
 
   // Navigation
   const [activeTab, setActiveTab] = useState<'overview' | 'gallery' | 'charts' | 'milestones'>(
@@ -590,8 +595,10 @@ export default function App() {
     setIsUploadOpen(true);
   };
 
-  const handleDownloadMoment = async (moment: MomentItem) => {
-    const ok = await downloadMediaFile(moment.mediaUrl, moment.title, moment.mediaType);
+  const handleDownloadMoment = async (moment: MomentItem, activeSlide?: MomentMediaSlide) => {
+    const targetUrl = activeSlide?.url || moment.mediaUrl;
+    const targetType = activeSlide?.mediaType || moment.mediaType;
+    const ok = await downloadMediaFile(targetUrl, moment.title, targetType);
     if (ok) {
       showToast(`File "${moment.title}" berhasil diunduh!`);
     }
@@ -997,7 +1004,10 @@ export default function App() {
                   return (
                     <div
                       key={moment.id}
-                      onClick={() => setSelectedMoment(moment)}
+                      onClick={() => {
+                        setSelectedMomentSlideIndex(0);
+                        setSelectedMoment(moment);
+                      }}
                       className="group relative pt-3 cursor-pointer"
                     >
                       <Clothespin
@@ -1006,36 +1016,24 @@ export default function App() {
                       />
 
                       <div className="h-full bg-white p-2.5 sm:p-3.5 pb-3.5 rounded-3xl border border-slate-200/90 shadow-sm group-hover:shadow-md transition-all flex flex-col justify-between">
-                        <div className="aspect-[4/5] rounded-2xl overflow-hidden bg-slate-100 relative mb-2.5">
-                          {moment.mediaType === 'video' ? (
-                            <video
-                              src={moment.mediaUrl}
-                              muted
-                              playsInline
-                              preload="metadata"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <img
-                              src={moment.mediaUrl}
-                              alt={moment.title}
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                              loading="lazy"
-                            />
-                          )}
-
-                          {moment.mediaType === 'video' && (
-                            <div className="absolute top-2 left-2 w-6 h-6 rounded-lg bg-black/60 text-white flex items-center justify-center backdrop-blur-xs">
-                              <Video className="w-3 h-3" />
-                            </div>
-                          )}
-
+                        <MomentMediaCarousel
+                          moment={moment}
+                          aspectClassName="aspect-[4/5] rounded-2xl mb-2.5"
+                          imageClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          onTapSlide={(slideIdx) => {
+                            setSelectedMomentSlideIndex(slideIdx);
+                            setSelectedMoment(moment);
+                          }}
+                          onActiveSlideChange={(_idx, slide) =>
+                            setOverviewActiveSlides((prev) => ({ ...prev, [moment.id]: slide }))
+                          }
+                        >
                           {moment.weightKg && (
-                            <div className="absolute top-2 right-2 bg-slate-900/85 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+                            <div className="absolute top-2 right-2 z-10 bg-slate-900/85 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full pointer-events-none">
                               {moment.weightKg} kg
                             </div>
                           )}
-                        </div>
+                        </MomentMediaCarousel>
 
                         <div className="flex items-start justify-between gap-1.5 px-0.5">
                           <div className="min-w-0 flex-1">
@@ -1065,9 +1063,9 @@ export default function App() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                void handleDownloadMoment(moment);
+                                void handleDownloadMoment(moment, overviewActiveSlides[moment.id]);
                               }}
-                              title="Unduh foto ini"
+                              title="Unduh foto yang sedang ditampilkan"
                               aria-label="Unduh foto"
                               className="w-7 h-7 rounded-lg text-slate-400 hover:text-teal-700 hover:bg-teal-50 flex items-center justify-center transition-colors cursor-pointer"
                             >
@@ -1178,9 +1176,12 @@ export default function App() {
           <CollageGallery
             moments={moments}
             birthDate={profile.birthDate}
-            onSelectMoment={setSelectedMoment}
+            onSelectMoment={(m, slideIdx = 0) => {
+              setSelectedMomentSlideIndex(slideIdx);
+              setSelectedMoment(m);
+            }}
             onEditMoment={handleOpenEditMoment}
-            onDownloadMoment={(m) => void handleDownloadMoment(m)}
+            onDownloadMoment={(m, slide) => void handleDownloadMoment(m, slide)}
             onOpenUpload={() => handleOpenUpload('media')}
           />
         )}
@@ -1329,19 +1330,29 @@ export default function App() {
         return (
           <MomentLightbox
             moment={selectedMoment}
+            initialSlideIndex={selectedMomentSlideIndex}
             birthDate={profile.birthDate}
             childName={profile.nickname}
-            onClose={() => setSelectedMoment(null)}
+            onClose={() => {
+              setSelectedMoment(null);
+              setSelectedMomentSlideIndex(0);
+            }}
             onEditMoment={handleOpenEditMoment}
             onNotify={showToast}
             onPrev={
               currentMomentIndex > 0
-                ? () => setSelectedMoment(moments[currentMomentIndex - 1])
+                ? () => {
+                    setSelectedMomentSlideIndex(0);
+                    setSelectedMoment(moments[currentMomentIndex - 1]);
+                  }
                 : undefined
             }
             onNext={
               currentMomentIndex >= 0 && currentMomentIndex < moments.length - 1
-                ? () => setSelectedMoment(moments[currentMomentIndex + 1])
+                ? () => {
+                    setSelectedMomentSlideIndex(0);
+                    setSelectedMoment(moments[currentMomentIndex + 1]);
+                  }
                 : undefined
             }
           />

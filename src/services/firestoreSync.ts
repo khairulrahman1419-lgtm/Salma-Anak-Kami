@@ -29,13 +29,18 @@ import {
   uploadChildMediaOnline,
 } from './mediaFirebaseStorage.ts';
 import { getClientDeviceId } from './realtimeFamilySync.ts';
-import { MAX_EXTRA_FAMILY_PHOTOS } from '../utils/imageHelper.ts';
+import {
+  getMomentMediaSlides,
+  MAX_EXTRA_FAMILY_PHOTOS,
+  MAX_MOMENT_MEDIA_ITEMS,
+} from '../utils/imageHelper.ts';
 import type {
   ChildProfile,
   FamilyExtraPhoto,
   GrowthRecord,
   MilestoneChecklistItem,
   MomentItem,
+  MomentMediaSlide,
   ParentingQuoteItem,
 } from '../types/index.ts';
 
@@ -370,11 +375,27 @@ export async function syncMomentToFirestore(
   const momentPath = `journals/${cleanJournalId}/moments/${momentId}`;
   const actorUid = auth.currentUser?.uid || 'keluarga_salma';
 
-  const mediaUrl = await ensureCloudinaryOrShortUrl(
-    moment.mediaUrl,
-    '/src/assets/images/moment_first_steps_1792502523399.jpg',
-    'moments'
+  const rawSlides = getMomentMediaSlides(moment).slice(0, MAX_MOMENT_MEDIA_ITEMS);
+  const resolvedSlides: MomentMediaSlide[] = await Promise.all(
+    rawSlides.map(async (slide, idx) => {
+      const cleanUrl = await ensureCloudinaryOrShortUrl(
+        slide.url,
+        '/src/assets/images/moment_first_steps_1792502523399.jpg',
+        'moments'
+      );
+      return {
+        id: sanitizeDocId(slide.id || `${momentId}_slide_${idx}`),
+        url: cleanUrl,
+        mediaType: slide.mediaType === 'video' ? 'video' : 'image',
+      };
+    })
   );
+
+  const primarySlide = resolvedSlides[0] || {
+    id: `${momentId}_slide_0`,
+    url: '/src/assets/images/moment_first_steps_1792502523399.jpg',
+    mediaType: moment.mediaType === 'video' ? 'video' : 'image',
+  };
 
   const payload: Record<string, unknown> = {
     journalId: cleanJournalId,
@@ -384,8 +405,13 @@ export async function syncMomentToFirestore(
     date: /^\d{4}-\d{2}-\d{2}$/.test(moment.date)
       ? moment.date
       : new Date().toISOString().slice(0, 10),
-    mediaType: moment.mediaType === 'video' ? 'video' : 'image',
-    mediaUrl,
+    mediaType: primarySlide.mediaType,
+    mediaUrl: primarySlide.url,
+    mediaItems: resolvedSlides.map((s) => ({
+      id: sanitizeDocId(s.id),
+      url: clampStr(s.url, 2048, ''),
+      mediaType: s.mediaType === 'video' ? 'video' : 'image',
+    })),
     category: moment.category,
     notes: clampStr(moment.notes, 2000, '-'),
     weightKg: Math.min(60, Math.max(0, Number(moment.weightKg) || 0)),
@@ -688,12 +714,24 @@ export function subscribeFamilyCloudJournal(
             ? d.createdAt.toDate().toISOString()
             : new Date().toISOString();
 
+        const parsedMediaItems: MomentMediaSlide[] | undefined = Array.isArray(d.mediaItems)
+          ? d.mediaItems
+              .slice(0, MAX_MOMENT_MEDIA_ITEMS)
+              .map((raw: any, idx: number) => ({
+                id: String(raw?.id || `${docSnap.id}_slide_${idx}`),
+                url: String(raw?.url || ''),
+                mediaType: raw?.mediaType === 'video' ? ('video' as const) : ('image' as const),
+              }))
+              .filter((s: MomentMediaSlide) => Boolean(s.url))
+          : undefined;
+
         return {
           id: docSnap.id,
           title: String(d.title || ''),
           date: String(d.date || ''),
           mediaType: d.mediaType === 'video' ? 'video' : 'image',
           mediaUrl: String(d.mediaUrl || ''),
+          mediaItems: parsedMediaItems && parsedMediaItems.length > 0 ? parsedMediaItems : undefined,
           category: d.category,
           notes: String(d.notes || ''),
           weightKg: Number(d.weightKg) > 0 ? Number(d.weightKg) : undefined,

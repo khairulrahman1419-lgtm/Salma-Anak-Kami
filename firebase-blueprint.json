@@ -205,7 +205,11 @@
           "type": "string",
           "maxLength": 2048,
           "minLength": 1,
-          "description": "Firebase Storage download URL for the uploaded photo or video."
+          "description": "Cloudinary or Firebase Storage URL for the primary cover photo or video."
+        },
+        "mediaItems": {
+          "type": "array",
+          "description": "Bounded list (up to 10) of swipeable photo/video slides belonging to this moment."
         },
         "category": {
           "type": "string",
