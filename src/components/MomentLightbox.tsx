@@ -21,7 +21,8 @@ import {
   formatHeadCirc,
 } from '../utils/growth.ts';
 import { downloadMediaFile } from '../utils/downloadMedia.ts';
-import { getMomentMediaSlides } from '../utils/imageHelper.ts';
+import { getMomentMediaSlides, getVideoPosterUrl } from '../utils/imageHelper.ts';
+import { VideoPlayer } from './VideoPlayer.tsx';
 
 interface MomentLightboxProps {
   moment: MomentItem | null;
@@ -186,12 +187,14 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
                   className="w-full h-full shrink-0 snap-center snap-always flex items-center justify-center p-1 sm:p-2"
                 >
                   {slide.mediaType === 'video' ? (
-                    <video
-                      src={slide.url}
-                      controls
-                      playsInline
-                      className="w-full h-full max-h-[64vh] object-contain"
-                    />
+                    <div className="w-full h-full flex items-center justify-center">
+                      <VideoPlayer
+                        src={slide.url}
+                        title={`${moment.title} (${idx + 1})`}
+                        poster={getVideoPosterUrl(slide.url)}
+                        className="w-full h-full max-h-[64vh] rounded-2xl"
+                      />
+                    </div>
                   ) : (
                     <img
                       src={slide.url}
@@ -289,8 +292,17 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
                     }`}
                   >
                     {slide.mediaType === 'video' ? (
-                      <div className="w-full h-full bg-slate-800 text-white flex items-center justify-center">
-                        <Video className="w-4 h-4 text-sky-400" />
+                      <div className="w-full h-full bg-slate-800 text-white flex items-center justify-center relative">
+                        {getVideoPosterUrl(slide.url) ? (
+                          <img
+                            src={getVideoPosterUrl(slide.url)}
+                            alt={`Thumbnail Video ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : null}
+                        <div className="absolute inset-0 bg-black/45 flex items-center justify-center">
+                          <Video className="w-4 h-4 text-emerald-300" />
+                        </div>
                       </div>
                     ) : (
                       <img

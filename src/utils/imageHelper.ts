@@ -70,3 +70,36 @@ export function readImageAsDataUrl(file: File, maxDim = 1280, quality = 0.84): P
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * Menghasilkan URL poster frame gambar (thumbnail) dari video Cloudinary
+ * sehingga video tidak pernah tampil sebagai kotak hitam kosong sebelum diputar.
+ */
+export function getVideoPosterUrl(videoUrl: string | undefined): string {
+  if (!videoUrl) return '';
+  const trimmed = videoUrl.trim();
+  if (trimmed.includes('cloudinary.com') && trimmed.includes('/video/upload/')) {
+    if (trimmed.includes('/so_')) {
+      return trimmed.replace(/\.(mp4|mov|webm|mkv|avi|m4v)(\?.*)?$/i, '.jpg$2');
+    }
+    return trimmed
+      .replace(/\/video\/upload\//, '/video/upload/so_0,f_jpg/')
+      .replace(/\.(mp4|mov|webm|mkv|avi|m4v)(\?.*)?$/i, '.jpg$2');
+  }
+  return '';
+}
+
+/**
+ * Menghasilkan URL streaming video yang dioptimalkan dengan f_auto,q_auto dari Cloudinary
+ * agar kompatibel dan lancar di semua browser (iOS Safari, Android Chrome, Desktop).
+ */
+export function getVideoStreamingUrl(videoUrl: string | undefined): string {
+  if (!videoUrl) return '';
+  const trimmed = videoUrl.trim();
+  if (trimmed.includes('cloudinary.com') && trimmed.includes('/video/upload/')) {
+    if (!trimmed.includes('/f_auto')) {
+      return trimmed.replace(/\/video\/upload\//, '/video/upload/f_auto,q_auto/');
+    }
+  }
+  return trimmed;
+}

@@ -26,6 +26,7 @@ import { simulateGoogleDriveUpload } from '../utils/googleDriveService.ts';
 import { downloadMediaFile } from '../utils/downloadMedia.ts';
 import {
   getMomentMediaSlides,
+  getVideoPosterUrl,
   MAX_MOMENT_MEDIA_ITEMS,
   readImageAsDataUrl,
 } from '../utils/imageHelper.ts';
@@ -782,8 +783,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                           {slide.mediaType === 'video' ? (
                             <video
                               src={slide.previewUrl}
+                              poster={getVideoPosterUrl(slide.previewUrl) || undefined}
                               controls
                               playsInline
+                              preload="metadata"
                               className="w-full h-full object-contain"
                             />
                           ) : (
@@ -881,8 +884,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                           }`}
                         >
                           {slide.mediaType === 'video' ? (
-                            <div className="w-full h-full bg-slate-900 text-white flex items-center justify-center">
-                              <Video className="w-4 h-4 text-sky-400" />
+                            <div className="w-full h-full bg-slate-900 text-white flex items-center justify-center relative">
+                              {getVideoPosterUrl(slide.previewUrl) ? (
+                                <img
+                                  src={getVideoPosterUrl(slide.previewUrl)}
+                                  alt={`Thumb Video ${idx + 1}`}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : null}
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                <Video className="w-4 h-4 text-emerald-300" />
+                              </div>
                             </div>
                           ) : (
                             <img

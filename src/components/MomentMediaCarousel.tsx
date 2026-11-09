@@ -1,7 +1,20 @@
-import React, { useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Video } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Video,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize,
+} from 'lucide-react';
 import type { MomentItem, MomentMediaSlide } from '../types/index.ts';
-import { getMomentMediaSlides } from '../utils/imageHelper.ts';
+import {
+  getMomentMediaSlides,
+  getVideoPosterUrl,
+  getVideoStreamingUrl,
+} from '../utils/imageHelper.ts';
 
 interface MomentMediaCarouselProps {
   moment: MomentItem;
@@ -29,14 +42,35 @@ export const MomentMediaCarousel: React.FC<MomentMediaCarouselProps> = ({
   const hasMultiple = slides.length > 1;
 
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const videoRefsMap = useRef<Record<string | number, HTMLVideoElement | null>>({});
   const pointerStartXRef = useRef<number | null>(null);
   const didSwipeDragRef = useRef<boolean>(false);
+
   const [activeIndex, setActiveIndex] = useState(0);
+  const [playingSlideId, setPlayingSlideId] = useState<string | number | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
 
   const safeIndex = Math.min(activeIndex, slides.length - 1);
   const currentSlide = slides[safeIndex] || slides[0];
 
+  const pauseAllVideos = () => {
+    Object.values(videoRefsMap.current).forEach((v) => {
+      if (v && !v.paused) {
+        v.pause();
+      }
+    });
+    setPlayingSlideId(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      pauseAllVideos();
+    };
+  }, []);
+
   const scrollToSlide = (targetIdx: number) => {
+    pauseAllVideos();
     const clamped = Math.max(0, Math.min(slides.length - 1, targetIdx));
     setActiveIndex(clamped);
     onActiveSlideChange?.(clamped, slides[clamped]);
@@ -55,8 +89,25 @@ export const MomentMediaCarousel: React.FC<MomentMediaCarouselProps> = ({
     const nextIdx = Math.round(container.scrollLeft / container.clientWidth);
     const clamped = Math.max(0, Math.min(slides.length - 1, nextIdx));
     if (clamped !== activeIndex) {
+      pauseAllVideos();
       setActiveIndex(clamped);
       onActiveSlideChange?.(clamped, slides[clamped]);
+    }
+  };
+
+  const startInlinePlayback = (id: string | number) => {
+    pauseAllVideos();
+    const v = videoRefsMap.current[id];
+    if (v) {
+      v.play()
+        .then(() => {
+          setPlayingSlideId(id);
+        })
+        .catch(() => {
+          v.muted = true;
+          setIsMuted(true);
+          v.play().then(() => setPlayingSlideId(id));
+        });
     }
   };
 
@@ -78,6 +129,7 @@ export const MomentMediaCarousel: React.FC<MomentMediaCarouselProps> = ({
       return;
     }
     if (onTapSlide) {
+      pauseAllVideos();
       e.stopPropagation();
       onTapSlide(safeIndex, currentSlide);
     }
@@ -100,38 +152,173 @@ export const MomentMediaCarousel: React.FC<MomentMediaCarouselProps> = ({
             : 'overflow-hidden'
         }`}
       >
-        {slides.map((slide, idx) => (
-          <div
-            key={slide.id || idx}
-            className="w-full h-full shrink-0 snap-center snap-always relative overflow-hidden"
-          >
-            {slide.mediaType === 'video' ? (
-              <video
-                src={slide.url}
-                muted
-                playsInline
-                preload="metadata"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <img
-                src={slide.url}
-                alt={`${moment.title} (${idx + 1}/${slides.length})`}
-                referrerPolicy="no-referrer"
-                draggable={false}
-                loading="lazy"
-                className={imageClassName}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = FALLBACK_MOMENT_SVG;
-                }}
-              />
-            )}
-          </div>
-        ))}
+        {slides.map((slide, idx) => {
+          const slideKey = slide.id || idx;
+          const isCurrentSlidePlaying = playingSlideId === slideKey;
+          const posterUrl = getVideoPosterUrl(slide.url);
+          const streamUrl = getVideoStreamingUrl(slide.url);
+
+          return (
+            <div
+              key={slideKey}
+              className="w-full h-full shrink-0 snap-center snap-always relative overflow-hidden"
+            >
+              {slide.mediaType === 'video' ? (
+                <div className="w-full h-full relative overflow-hidden bg-slate-950 flex items-center justify-center">
+                  <video
+                    ref={(el) => {
+                      videoRefsMap.current[slideKey] = el;
+                    }}
+                    src={streamUrl}
+                    poster={posterUrl || undefined}
+                    muted={isMuted}
+                    playsInline
+                    preload="metadata"
+                    onTimeUpdate={(e) => {
+                      const v = e.currentTarget;
+                      if (v.duration > 0) {
+                        setVideoProgress((v.currentTime / v.duration) * 100);
+                      }
+                    }}
+                    onEnded={() => {
+                      setPlayingSlideId(null);
+                      setVideoProgress(0);
+                    }}
+                    className="w-full h-full object-cover"
+                  />
+
+                  {/* Inline Active Player Overlay */}
+                  {isCurrentSlidePlaying ? (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute inset-0 z-20 flex flex-col justify-between p-2.5 bg-gradient-to-t from-black/85 via-transparent to-black/60 pointer-events-auto"
+                    >
+                      {/* Top Bar: Live Playing Indicator, Mute Toggle & Fullscreen Button */}
+                      <div className="flex items-center justify-between">
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-600/90 text-white text-[10px] font-bold flex items-center gap-1 backdrop-blur-xs shadow-xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                          <span>Video Diputar</span>
+                        </span>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const v = videoRefsMap.current[slideKey];
+                              const nextMuted = !isMuted;
+                              if (v) v.muted = nextMuted;
+                              setIsMuted(nextMuted);
+                            }}
+                            title={isMuted ? 'Nyalakan Suara' : 'Bisukan Suara'}
+                            aria-label={isMuted ? 'Nyalakan suara' : 'Bisukan suara'}
+                            className="w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-xs transition-colors cursor-pointer"
+                          >
+                            {isMuted ? (
+                              <VolumeX className="w-3.5 h-3.5 text-rose-300" />
+                            ) : (
+                              <Volume2 className="w-3.5 h-3.5 text-emerald-300" />
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              pauseAllVideos();
+                              onTapSlide?.(idx, slide);
+                            }}
+                            title="Buka Layar Penuh"
+                            aria-label="Buka layar penuh"
+                            className="w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-xs transition-colors cursor-pointer"
+                          >
+                            <Maximize className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Bottom Bar: Pause Button & Timeline Progress */}
+                      <div className="space-y-1.5">
+                        <div className="w-full h-1 bg-white/30 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-emerald-400 to-teal-300 transition-all"
+                            style={{ width: `${Math.min(100, videoProgress)}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const v = videoRefsMap.current[slideKey];
+                              if (v) {
+                                v.pause();
+                                setPlayingSlideId(null);
+                              }
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-black/70 hover:bg-black/90 text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            <Pause className="w-3 h-3 fill-current" />
+                            <span>Jeda</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              pauseAllVideos();
+                              onTapSlide?.(idx, slide);
+                            }}
+                            className="text-[10px] font-bold text-emerald-300 hover:text-white transition-colors cursor-pointer"
+                          >
+                            Detail &amp; Kontrol Penuh &rarr;
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Inactive State: Prominent Center Play Button */
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startInlinePlayback(slideKey);
+                      }}
+                      className="absolute inset-0 z-10 flex flex-col items-center justify-center cursor-pointer bg-black/30 hover:bg-black/50 transition-colors group/play"
+                    >
+                      <div className="relative">
+                        <div className="absolute -inset-1.5 bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full blur-xs opacity-75 group-hover/play:opacity-100 transition duration-200 animate-pulse" />
+                        
+                        <div className="relative w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-slate-900/90 border border-white/90 text-white flex items-center justify-center shadow-lg transition-transform group-hover/play:scale-110 active:scale-95">
+                          <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-white text-white ml-0.5" />
+                        </div>
+                      </div>
+
+                      <span className="mt-2 px-2.5 py-0.5 rounded-full bg-black/75 backdrop-blur-xs text-white text-[10px] font-bold border border-white/10 shadow-xs flex items-center gap-1">
+                        <span>Putar Video</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <img
+                  src={slide.url}
+                  alt={`${moment.title} (${idx + 1}/${slides.length})`}
+                  referrerPolicy="no-referrer"
+                  draggable={false}
+                  loading="lazy"
+                  className={imageClassName}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = FALLBACK_MOMENT_SVG;
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {/* Video Indicator when active slide is a video */}
-      {currentSlide?.mediaType === 'video' && (
+      {/* Video Indicator when active slide is a video and not currently playing */}
+      {currentSlide?.mediaType === 'video' && playingSlideId === null && (
         <div className="absolute bottom-2.5 left-2.5 z-10 w-6 h-6 rounded-lg bg-black/60 text-white flex items-center justify-center backdrop-blur-xs pointer-events-none">
           <Video className="w-3 h-3" />
         </div>

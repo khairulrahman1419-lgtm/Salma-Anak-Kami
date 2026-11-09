@@ -152,13 +152,19 @@ function withCloudTimeout<T>(
 async function ensureCloudinaryOrShortUrl(
   url: string | undefined,
   fallbackUrl: string,
-  folderCategory: 'moments' | 'avatars' = 'moments'
+  folderCategory: 'moments' | 'avatars' = 'moments',
+  mediaType: 'image' | 'video' = 'image'
 ): Promise<string> {
   const target = (url || fallbackUrl).trim();
   if (!target) return fallbackUrl;
   if (target.startsWith('data:') || target.startsWith('blob:') || target.length > 2048) {
     try {
-      const uploaded = await uploadChildMediaOnline(target, 'salma_media.jpg', folderCategory);
+      const isVid =
+        mediaType === 'video' ||
+        target.startsWith('data:video') ||
+        /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(target);
+      const fileName = isVid ? 'salma_video.mp4' : 'salma_media.jpg';
+      const uploaded = await uploadChildMediaOnline(target, fileName, folderCategory);
       if (uploaded && !uploaded.startsWith('data:') && uploaded.length <= 2048) {
         return uploaded;
       }
@@ -378,10 +384,15 @@ export async function syncMomentToFirestore(
   const rawSlides = getMomentMediaSlides(moment).slice(0, MAX_MOMENT_MEDIA_ITEMS);
   const resolvedSlides: MomentMediaSlide[] = await Promise.all(
     rawSlides.map(async (slide, idx) => {
+      const isVid = slide.mediaType === 'video';
+      const defaultFallback = isVid
+        ? slide.url
+        : '/src/assets/images/moment_first_steps_1792502523399.jpg';
       const cleanUrl = await ensureCloudinaryOrShortUrl(
         slide.url,
-        '/src/assets/images/moment_first_steps_1792502523399.jpg',
-        'moments'
+        defaultFallback,
+        'moments',
+        slide.mediaType
       );
       return {
         id: sanitizeDocId(slide.id || `${momentId}_slide_${idx}`),
