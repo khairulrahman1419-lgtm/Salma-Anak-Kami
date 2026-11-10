@@ -171,3 +171,128 @@ export function uploadToCloudinary(
     xhr.send(formData);
   });
 }
+
+/**
+ * Mengunggah file besar bertahap (chunked upload) ke Cloudinary resmi
+ * untuk file video/foto berukuran besar agar upload stabil.
+ */
+export async function uploadToCloudinaryChunked(
+  fileOrBlob: File | Blob,
+  fileName = 'salma_video.mp4',
+  onProgress?: CloudinaryProgressCallback,
+  options?: CloudinaryUploadOptions
+): Promise<CloudinaryUploadResponse> {
+  const chunkSize = 6 * 1024 * 1024; // 6MB per slice
+  const totalSize = fileOrBlob.size;
+  const uniqueId = `cl_chunk_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const totalChunks = Math.ceil(totalSize / chunkSize);
+
+  let currentStart = 0;
+  let lastResponse: CloudinaryUploadResponse | null = null;
+
+  for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+    if (options?.signal?.aborted) {
+      throw new Error('Pengunggahan ke Cloudinary dibatalkan.');
+    }
+
+    const currentEnd = Math.min(currentStart + chunkSize, totalSize);
+    const chunkBlob = fileOrBlob.slice(currentStart, currentEnd);
+
+    const formData = new FormData();
+    formData.append('file', chunkBlob, fileName);
+    formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+    const xhr = new XMLHttpRequest();
+
+    const chunkPromise = new Promise<CloudinaryUploadResponse>((resolve, reject) => {
+      const handleAbort = () => {
+        try {
+          xhr.abort();
+        } catch {
+          // ignore
+        }
+        reject(new Error('Pengunggahan dibatalkan.'));
+      };
+
+      if (options?.signal) {
+        options.signal.addEventListener('abort', handleAbort, { once: true });
+      }
+
+      xhr.open('POST', uploadUrl, true);
+      xhr.setRequestHeader('X-Unique-Upload-Id', uniqueId);
+      xhr.setRequestHeader(
+        'Content-Range',
+        `bytes ${currentStart}-${currentEnd - 1}/${totalSize}`
+      );
+      xhr.timeout = 240_000; // 4 menit per chunk
+
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const overallLoaded = currentStart + event.loaded;
+            const overallPct = Math.min(99, Math.round((overallLoaded / totalSize) * 100));
+            onProgress(overallPct, overallLoaded, totalSize);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (options?.signal) {
+          options.signal.removeEventListener('abort', handleAbort);
+        }
+        if (xhr.status !== 200) {
+          let errMsg = `HTTP ${xhr.status}`;
+          try {
+            const errJson = JSON.parse(xhr.responseText);
+            errMsg = errJson.error?.message || errJson.message || errMsg;
+          } catch {
+            errMsg = xhr.responseText?.slice(0, 200) || errMsg;
+          }
+          reject(new Error(`Chunk upload Cloudinary gagal: ${errMsg}`));
+          return;
+        }
+        try {
+          const parsed = JSON.parse(xhr.responseText) as CloudinaryUploadResponse;
+          resolve(parsed);
+        } catch (e: any) {
+          reject(new Error(`Format JSON respons Cloudinary tidak valid: ${e?.message}`));
+        }
+      };
+
+      xhr.onerror = () => {
+        if (options?.signal) {
+          options.signal.removeEventListener('abort', handleAbort);
+        }
+        reject(new Error('Koneksi jaringan terputus saat chunk upload Cloudinary.'));
+      };
+
+      xhr.ontimeout = () => {
+        if (options?.signal) {
+          options.signal.removeEventListener('abort', handleAbort);
+        }
+        reject(new Error('Waktu chunk upload Cloudinary habis.'));
+      };
+
+      xhr.send(formData);
+    });
+
+    lastResponse = await chunkPromise;
+    currentStart = currentEnd;
+  }
+
+  if (!lastResponse?.secure_url && !lastResponse?.url) {
+    throw new Error('Respons akhir Cloudinary tidak menyertakan secure_url.');
+  }
+
+  const finalUrl = (lastResponse.secure_url || lastResponse.url || '').replace(
+    /^http:\/\//i,
+    'https://'
+  );
+  if (onProgress) onProgress(100, totalSize, totalSize);
+
+  return {
+    ...lastResponse,
+    secure_url: finalUrl,
+  };
+}

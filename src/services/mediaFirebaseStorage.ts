@@ -7,9 +7,9 @@
  * yang akan diunggah otomatis ke Cloudinary begitu HP kembali online.
  */
 
-import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, uploadBytesResumable, getDownloadURL, type UploadTask } from 'firebase/storage';
 import { auth, storage } from '../firebase.ts';
-import { uploadToCloudinary } from './cloudinaryService.ts';
+import { uploadToCloudinary, uploadToCloudinaryChunked } from './cloudinaryService.ts';
 import { saveOfflineMediaBlob } from './offlineStorage.ts';
 
 function fileOrBlobToDataUrl(blob: Blob): Promise<string> {
@@ -35,52 +35,85 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mime });
 }
 
-async function fallbackFirebaseStorageUpload(
+export interface FirebaseResumableOptions {
+  signal?: AbortSignal;
+  onTaskCreated?: (task: UploadTask) => void;
+}
+
+/**
+ * Unggah media ke Firebase Storage bawaan ("salma-anak-kami") secara resumable (uploadBytesResumable).
+ * Mendukung file video/foto berukuran besar tanpa batasan, dengan progres byte akurat & fitur batal.
+ */
+export async function uploadToFirebaseStorageResumable(
   blob: Blob,
   safeFileName: string,
   folderCategory: 'moments' | 'avatars' = 'moments',
-  onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void
-): Promise<string | null> {
-  try {
-    const ownerFolder = auth.currentUser?.uid || 'salma_family';
-    const objectPath = `journals/${ownerFolder}/${folderCategory}/${Date.now()}_${safeFileName}`;
-    const storageRef = ref(storage, objectPath);
+  onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void,
+  options?: FirebaseResumableOptions
+): Promise<string> {
+  const ownerFolder = auth.currentUser?.uid || 'salma_family';
+  const objectPath = `journals/${ownerFolder}/${folderCategory}/${Date.now()}_${safeFileName}`;
+  const storageRef = ref(storage, objectPath);
 
-    return await new Promise<string>((resolve, reject) => {
-      const uploadTask = uploadBytesResumable(storageRef, blob, {
-        contentType: blob.type || (safeFileName.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'),
-      });
+  return new Promise<string>((resolve, reject) => {
+    if (options?.signal?.aborted) {
+      reject(new Error('Pengunggahan ke Firebase Storage dibatalkan.'));
+      return;
+    }
 
-      uploadTask.on(
-        'state_changed',
-        (snapshot) => {
-          if (snapshot.totalBytes > 0 && onProgress) {
-            const pct = Math.min(
-              99,
-              Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
-            );
-            onProgress(pct, snapshot.bytesTransferred, snapshot.totalBytes);
-          }
-        },
-        (error) => {
-          console.warn('Firebase Storage upload error:', error);
-          reject(error);
-        },
-        async () => {
-          try {
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            if (onProgress) onProgress(100, blob.size, blob.size);
-            resolve(downloadUrl);
-          } catch (e) {
-            reject(e);
-          }
-        }
-      );
+    const uploadTask = uploadBytesResumable(storageRef, blob, {
+      contentType: blob.type || (safeFileName.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'),
     });
-  } catch (err) {
-    console.warn('Fallback Firebase Storage upload failed:', err);
-    return null;
-  }
+
+    options?.onTaskCreated?.(uploadTask);
+
+    const onAbort = () => {
+      try {
+        uploadTask.cancel();
+      } catch {
+        // ignore
+      }
+      reject(new Error('Pengunggahan dibatalkan oleh pengguna.'));
+    };
+
+    if (options?.signal) {
+      options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    const cleanup = () => {
+      if (options?.signal) {
+        options.signal.removeEventListener('abort', onAbort);
+      }
+    };
+
+    uploadTask.on(
+      'state_changed',
+      (snapshot) => {
+        if (snapshot.totalBytes > 0 && onProgress) {
+          const pct = Math.min(
+            99,
+            Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
+          );
+          onProgress(pct, snapshot.bytesTransferred, snapshot.totalBytes);
+        }
+      },
+      (error) => {
+        cleanup();
+        console.warn('Firebase Storage upload error:', error);
+        reject(error);
+      },
+      async () => {
+        cleanup();
+        try {
+          const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+          if (onProgress) onProgress(100, blob.size, blob.size);
+          resolve(downloadUrl);
+        } catch (e) {
+          reject(e);
+        }
+      }
+    );
+  });
 }
 
 /**
@@ -123,17 +156,26 @@ export async function uploadAvatarToCloudinaryWithTimeout(
   return res.secure_url;
 }
 
+export interface ChildMediaUploadOptions {
+  signal?: AbortSignal;
+  onTaskCreated?: (task: UploadTask) => void;
+  onFallbackTriggered?: (provider: 'firebase_storage', reason: string) => void;
+}
+
 /**
- * Mengunggah foto atau video tumbuh kembang Salma ke Cloudinary (`la3st6qh` / preset `wvulbv7y`)
- * dan mengembalikan `secure_url` HTTPS untuk disimpan ke dokumen Cloud Firestore (`salma-anak-kami`).
+ * Mengunggah foto atau video tumbuh kembang Salma secara otomatis & seamless:
+ * 1. Mencoba Cloudinary terlebih dahulu (format resmi https://api.cloudinary.com/v1_1/la3st6qh/auto/upload)
+ * 2. Jika Cloudinary gagal atau ukuran file terlalu besar, otomatis beralih ke Firebase Storage (uploadBytesResumable)
+ * 3. Menghasilkan HTTPS URL resmi yang langsung disimpan ke Firestore
  */
 export async function uploadChildMediaOnline(
   input: File | Blob | string,
   preferredName = 'momen_salma.jpg',
   folderCategory: 'moments' | 'avatars' = 'moments',
-  onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void
+  onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void,
+  options?: ChildMediaUploadOptions
 ): Promise<string> {
-  // Jika sudah berupa URL HTTPS (Cloudinary / CDN / aset lokal), tidak perlu diunggah ulang
+  // Jika sudah berupa URL HTTPS (Cloudinary / Firebase / CDN / aset lokal), tidak perlu diunggah ulang
   if (typeof input === 'string' && !input.startsWith('data:') && !input.startsWith('blob:')) {
     return input;
   }
@@ -161,25 +203,58 @@ export async function uploadChildMediaOnline(
     return dataUrl || (await fileOrBlobToDataUrl(blob));
   }
 
-  // 1. Prioritas Utama: Unggah langsung ke Cloudinary (https://api.cloudinary.com/v1_1/la3st6qh/auto/upload)
+  // 1. Prioritas Utama: Unggah ke Cloudinary resmi
   try {
-    const cloudinaryRes = await uploadToCloudinary(blob, safeName, onProgress, {
-      timeoutMs: blob.size > 50 * 1024 * 1024 ? 900_000 : 300_000,
-    });
+    const isLargeFile = blob.size > 20 * 1024 * 1024; // > 20MB
+    const cloudinaryPromise = isLargeFile
+      ? uploadToCloudinaryChunked(blob, safeName, onProgress, {
+          signal: options?.signal,
+          timeoutMs: 900_000,
+        })
+      : uploadToCloudinary(blob, safeName, onProgress, {
+          signal: options?.signal,
+          timeoutMs: 300_000,
+        });
+
+    const cloudinaryRes = await cloudinaryPromise;
     if (cloudinaryRes.secure_url) {
       return cloudinaryRes.secure_url;
     }
-  } catch (cloudinaryErr) {
+  } catch (cloudinaryErr: any) {
+    if (options?.signal?.aborted) {
+      throw new Error('Pengunggahan dibatalkan.');
+    }
+    const errText = cloudinaryErr?.message || String(cloudinaryErr);
     console.warn(
-      'Cloudinary upload mengalami kendala / ukuran melebihi batas, beralih otomatis ke Firebase Storage:',
-      cloudinaryErr
+      'Cloudinary upload mengalami kendala, beralih otomatis ke Firebase Storage:',
+      errText
+    );
+    options?.onFallbackTriggered?.(
+      'firebase_storage',
+      'Mengalihkan pengunggahan ke Firebase Storage (cadangan kapasitas besar)...'
     );
   }
 
-  // 2. Cadangan Otomatis: Firebase Storage pada proyek `salma-anak-kami` (Kapasitas besar tanpa batas ukuran Cloudinary)
-  const fbStorageUrl = await fallbackFirebaseStorageUpload(blob, safeName, folderCategory, onProgress);
-  if (fbStorageUrl) {
-    return fbStorageUrl;
+  // 2. Cadangan Otomatis: Firebase Storage pada proyek `salma-anak-kami` (Kapasitas besar tanpa batas ukuran)
+  try {
+    const fbStorageUrl = await uploadToFirebaseStorageResumable(
+      blob,
+      safeFileName(safeName),
+      folderCategory,
+      onProgress,
+      {
+        signal: options?.signal,
+        onTaskCreated: options?.onTaskCreated,
+      }
+    );
+    if (fbStorageUrl) {
+      return fbStorageUrl;
+    }
+  } catch (fbErr: any) {
+    if (options?.signal?.aborted) {
+      throw new Error('Pengunggahan dibatalkan.');
+    }
+    console.warn('Firebase Storage upload error:', fbErr);
   }
 
   // 3. Cadangan Server Lokal (`/uploads/...`) atau IndexedDB
@@ -205,4 +280,8 @@ export async function uploadChildMediaOnline(
   }
 
   return resolvedDataUrl;
+}
+
+function safeFileName(raw: string): string {
+  return raw.replace(/[^a-zA-Z0-9._-]/g, '_');
 }

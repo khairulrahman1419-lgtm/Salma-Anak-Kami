@@ -30,6 +30,8 @@ import {
   MAX_MOMENT_MEDIA_ITEMS,
   readImageAsDataUrl,
 } from '../utils/imageHelper.ts';
+import { backgroundUploadManager } from '../services/backgroundUploadManager.ts';
+import type { ChildProfile } from '../types/index.ts';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -38,6 +40,8 @@ interface UploadModalProps {
   onUpdateMoment?: (moment: MomentItem) => void;
   editingMoment?: MomentItem | null;
   childName: string;
+  profile?: ChildProfile;
+  activeJournalId?: string;
   initialMode?: 'media' | 'milestone';
   storageDestination: 'google_drive' | 'vps_local';
   currentUser: User | null;
@@ -90,6 +94,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   onUpdateMoment,
   editingMoment,
   childName,
+  profile,
+  activeJournalId,
   initialMode = 'media',
   storageDestination,
   currentUser,
@@ -412,124 +418,49 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         }
       }
 
-      // 1. Unggah seluruh slide foto/video ke Cloudinary (la3st6qh / wvulbv7y)
-      const uploadedSlides: MomentMediaSlide[] = [];
-      for (let i = 0; i < effectiveDrafts.length; i++) {
-        const slide = effectiveDrafts[i];
-        const slideLabel =
-          effectiveDrafts.length > 1 ? ` (${i + 1}/${effectiveDrafts.length})` : '';
-
-        setProgressStatus(
-          navigator.onLine
-            ? `Mengunggah foto/video${slideLabel} ke Cloudinary & Firestore...`
-            : `Menyimpan media${slideLabel} ke penyimpanan lokal offline...`
-        );
-
-        const onlineUrl = await uploadChildMediaOnline(
-          slide.file ? slide.file : slide.previewUrl,
-          slide.fileName ||
-            `momen_${Date.now()}_${i + 1}.${slide.mediaType === 'video' ? 'mp4' : 'jpg'}`,
-          'moments',
-          (pct, loaded, total) => {
-            if (navigator.onLine) {
-              const sizeInfo =
-                loaded && total
-                  ? ` (${formatFileSize(loaded)} / ${formatFileSize(total)} - ${pct}%)`
-                  : ` (${pct}%)`;
-              setProgressStatus(
-                `Mengunggah ${slide.mediaType === 'video' ? 'video' : 'foto'}${slideLabel}${sizeInfo}...`
-              );
-            }
-          }
-        );
-
-        uploadedSlides.push({
-          id: slide.id || `slide_${Date.now()}_${i + 1}`,
-          url: onlineUrl,
-          mediaType: slide.mediaType,
-        });
-      }
-
-      const coverSlide = uploadedSlides[0];
-
-      let driveFileId: string | undefined = editingMoment?.googleDriveFileId;
-      let driveWebViewLink: string | undefined = editingMoment?.googleDriveWebViewLink;
-      let isSyncedToDrive = editingMoment?.googleDriveSynced || false;
-
-      if (storageDestination === 'google_drive' && accessToken) {
-        setProgressStatus('Menyimpan cadangan ke folder Google Drive Anda...');
-
-        let mediaBlob: Blob;
-        if (effectiveDrafts[0].file) {
-          mediaBlob = effectiveDrafts[0].file;
-        } else {
-          const resp = await fetch(coverSlide.url);
-          mediaBlob = await resp.blob();
-        }
-
-        const driveResult = await uploadMediaToGoogleDrive(
-          mediaBlob,
-          {
-            childName,
-            date,
-            title: title.trim(),
-            category,
-            notes: notes.trim(),
-            weightKg: weightKg ? parseFloat(weightKg) : undefined,
-            heightCm: heightCm ? parseFloat(heightCm) : undefined,
-            headCircumferenceCm: headCircumferenceCm ? parseFloat(headCircumferenceCm) : undefined,
-          },
-          accessToken,
-          (step) => setProgressStatus(step)
-        );
-
-        driveFileId = driveResult.fileId;
-        driveWebViewLink = driveResult.webViewLink;
-        isSyncedToDrive = true;
-      } else if (storageDestination === 'google_drive' && !editingMoment) {
-        setProgressStatus('Menyelesaikan sinkronisasi cloud keluarga...');
-        const simRes = await simulateGoogleDriveUpload({
-          file: effectiveDrafts[0].file || null,
-          previewUrl: coverSlide.url,
-          mediaType: coverSlide.mediaType,
-          date,
+      // 1. Serahkan proses pengunggahan ke BackgroundUploadManager (Non-Blocking UI)
+      // Memungkinkan video/foto besar diunggah di latar belakang sementara pengguna bebas beraktivitas
+      backgroundUploadManager.startUpload({
+        momentDraft: {
+          id: editingMoment ? editingMoment.id : `moment_${Date.now()}`,
           title: title.trim(),
+          date,
           category,
           notes: notes.trim(),
           weightKg: weightKg ? parseFloat(weightKg) : undefined,
           heightCm: heightCm ? parseFloat(heightCm) : undefined,
           headCircumferenceCm: headCircumferenceCm ? parseFloat(headCircumferenceCm) : undefined,
-          childName,
-        });
-        driveFileId = simRes.fileId;
-        driveWebViewLink = simRes.webViewLink;
-        isSyncedToDrive = true;
-      }
+          storageDestination,
+          accessToken,
+        },
+        slides: effectiveDrafts.map((d) => ({
+          id: d.id,
+          file: d.file,
+          previewUrl: d.previewUrl,
+          mediaType: d.mediaType,
+          fileName: d.fileName,
+          fileSize: d.fileSize || d.file?.size,
+        })),
+        isEditing: Boolean(editingMoment),
+        editingMoment,
+        childProfile: profile || {
+          id: 'salma_profile',
+          name: childName || 'Salma Nur Khalisa',
+          nickname: childName || 'Salma',
+          birthDate: '2026-03-25',
+          gender: 'female',
+          fatherName: 'Ayah Rahman',
+          fatherAvatarUrl: '/src/assets/images/moment_father_play_1792555577232.jpg',
+          motherName: 'Bunda',
+          motherAvatarUrl: '/src/assets/images/moment_eating_puree_1792555107552.jpg',
+          birthWeightKg: 3.3,
+          birthHeightCm: 49.5,
+          avatarUrl: '/src/assets/images/moment_first_steps_1792502523399.jpg',
+        },
+        activeJournalId: activeJournalId || 'salma_family_journal',
+      });
 
-      const savedMoment: MomentItem = {
-        id: editingMoment ? editingMoment.id : `moment_${Date.now()}`,
-        title: title.trim(),
-        date,
-        mediaType: coverSlide.mediaType,
-        mediaUrl: coverSlide.url,
-        mediaItems: uploadedSlides,
-        category,
-        notes: notes.trim(),
-        weightKg: weightKg ? parseFloat(weightKg) : undefined,
-        heightCm: heightCm ? parseFloat(heightCm) : undefined,
-        headCircumferenceCm: headCircumferenceCm ? parseFloat(headCircumferenceCm) : undefined,
-        googleDriveSynced: isSyncedToDrive,
-        googleDriveFileId: driveFileId,
-        googleDriveWebViewLink: driveWebViewLink,
-        createdAt: editingMoment ? editingMoment.createdAt : new Date().toISOString(),
-      };
-
-      if (editingMoment && onUpdateMoment) {
-        onUpdateMoment(savedMoment);
-      } else {
-        onSaveMoment(savedMoment);
-      }
-
+      // 2. Segera tutup jendela/modal unggah (Non-Blocking UI)
       resetForm();
       onClose();
     } catch (err: any) {

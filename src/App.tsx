@@ -90,6 +90,8 @@ import { EditProfileModal } from './components/EditProfileModal.tsx';
 import { QuickGrowthModal } from './components/QuickGrowthModal.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { FloatingDoctorFAQ } from './components/FloatingDoctorFAQ.tsx';
+import { FloatingUploadProgress } from './components/FloatingUploadProgress.tsx';
+import { backgroundUploadManager } from './services/backgroundUploadManager.ts';
 
 export default function App() {
   // State Utama dengan Offline Fallback (localStorage + IndexedDB) & Real-Time Firestore Sync
@@ -529,6 +531,40 @@ export default function App() {
       disconnect();
     };
   }, []);
+
+  // 5. Registrasi Callback Pengunggahan di Latar Belakang (Non-Blocking UI)
+  useEffect(() => {
+    backgroundUploadManager.registerCallbacks({
+      onMomentSaved: (savedMoment, isEditing) => {
+        setMoments((prev) => {
+          const exists = prev.some((m) => m.id === savedMoment.id);
+          const next = exists
+            ? prev.map((m) => (m.id === savedMoment.id ? savedMoment : m))
+            : [savedMoment, ...prev];
+          persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, next);
+          return next;
+        });
+        setSelectedMoment((curr) => (curr && curr.id === savedMoment.id ? savedMoment : curr));
+        void pushFamilyMutation(isEditing ? 'moment:update' : 'moment:create', savedMoment);
+        showToast(
+          isEditing
+            ? `Momen "${savedMoment.title}" berhasil diperbarui & tersinkronisasi!`
+            : `Momen "${savedMoment.title}" berhasil diunggah & tersinkronisasi!`
+        );
+      },
+      onGrowthSaved: (newRecord) => {
+        setRecords((prev) => {
+          const exists = prev.some((r) => r.id === newRecord.id);
+          const next = exists
+            ? prev.map((r) => (r.id === newRecord.id ? newRecord : r))
+            : [...prev, newRecord];
+          persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, next);
+          return next;
+        });
+        void pushFamilyMutation('growth:create', newRecord);
+      },
+    });
+  }, [showToast]);
 
   // 5. Pantau Status Login Google Opsional (untuk Cadangan Google Drive)
   useEffect(() => {
@@ -1351,6 +1387,8 @@ export default function App() {
         onUpdateMoment={handleUpdateMoment}
         editingMoment={editingMoment}
         childName={profile.nickname}
+        profile={profile}
+        activeJournalId={activeJournalId}
         initialMode={uploadMode}
         storageDestination={storageDestination}
         currentUser={currentUser}
@@ -1421,6 +1459,9 @@ export default function App() {
         isSyncing={isFlushingOffline}
         onRetrySync={() => void flushPendingOfflineQueue()}
       />
+
+      {/* Widget Melayang Progres Unggah Latar Belakang (Non-Blocking UI) */}
+      <FloatingUploadProgress />
 
       {/* Notification Toast */}
       {toastMessage && (
