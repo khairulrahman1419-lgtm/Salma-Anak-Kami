@@ -7,7 +7,7 @@
  * yang akan diunggah otomatis ke Cloudinary begitu HP kembali online.
  */
 
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { auth, storage } from '../firebase.ts';
 import { uploadToCloudinary } from './cloudinaryService.ts';
 import { saveOfflineMediaBlob } from './offlineStorage.ts';
@@ -38,17 +38,47 @@ function dataUrlToBlob(dataUrl: string): Blob {
 async function fallbackFirebaseStorageUpload(
   blob: Blob,
   safeFileName: string,
-  folderCategory: 'moments' | 'avatars' = 'moments'
+  folderCategory: 'moments' | 'avatars' = 'moments',
+  onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void
 ): Promise<string | null> {
   try {
     const ownerFolder = auth.currentUser?.uid || 'salma_family';
     const objectPath = `journals/${ownerFolder}/${folderCategory}/${Date.now()}_${safeFileName}`;
     const storageRef = ref(storage, objectPath);
-    const snapshot = await uploadBytes(storageRef, blob, {
-      contentType: blob.type || 'image/jpeg',
+
+    return await new Promise<string>((resolve, reject) => {
+      const uploadTask = uploadBytesResumable(storageRef, blob, {
+        contentType: blob.type || (safeFileName.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'),
+      });
+
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          if (snapshot.totalBytes > 0 && onProgress) {
+            const pct = Math.min(
+              99,
+              Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
+            );
+            onProgress(pct, snapshot.bytesTransferred, snapshot.totalBytes);
+          }
+        },
+        (error) => {
+          console.warn('Firebase Storage upload error:', error);
+          reject(error);
+        },
+        async () => {
+          try {
+            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+            if (onProgress) onProgress(100, blob.size, blob.size);
+            resolve(downloadUrl);
+          } catch (e) {
+            reject(e);
+          }
+        }
+      );
     });
-    return await getDownloadURL(snapshot.ref);
-  } catch {
+  } catch (err) {
+    console.warn('Fallback Firebase Storage upload failed:', err);
     return null;
   }
 }
@@ -101,7 +131,7 @@ export async function uploadChildMediaOnline(
   input: File | Blob | string,
   preferredName = 'momen_salma.jpg',
   folderCategory: 'moments' | 'avatars' = 'moments',
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void
 ): Promise<string> {
   // Jika sudah berupa URL HTTPS (Cloudinary / CDN / aset lokal), tidak perlu diunggah ulang
   if (typeof input === 'string' && !input.startsWith('data:') && !input.startsWith('blob:')) {
@@ -133,16 +163,21 @@ export async function uploadChildMediaOnline(
 
   // 1. Prioritas Utama: Unggah langsung ke Cloudinary (https://api.cloudinary.com/v1_1/la3st6qh/auto/upload)
   try {
-    const cloudinaryRes = await uploadToCloudinary(blob, safeName, onProgress);
+    const cloudinaryRes = await uploadToCloudinary(blob, safeName, onProgress, {
+      timeoutMs: blob.size > 50 * 1024 * 1024 ? 900_000 : 300_000,
+    });
     if (cloudinaryRes.secure_url) {
       return cloudinaryRes.secure_url;
     }
   } catch (cloudinaryErr) {
-    console.warn('Cloudinary upload mengalami kendala, mencoba jalur cadangan:', cloudinaryErr);
+    console.warn(
+      'Cloudinary upload mengalami kendala / ukuran melebihi batas, beralih otomatis ke Firebase Storage:',
+      cloudinaryErr
+    );
   }
 
-  // 2. Cadangan: Firebase Storage pada proyek `salma-anak-kami`
-  const fbStorageUrl = await fallbackFirebaseStorageUpload(blob, safeName, folderCategory);
+  // 2. Cadangan Otomatis: Firebase Storage pada proyek `salma-anak-kami` (Kapasitas besar tanpa batas ukuran Cloudinary)
+  const fbStorageUrl = await fallbackFirebaseStorageUpload(blob, safeName, folderCategory, onProgress);
   if (fbStorageUrl) {
     return fbStorageUrl;
   }

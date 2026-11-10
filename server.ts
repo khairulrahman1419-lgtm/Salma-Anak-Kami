@@ -200,8 +200,9 @@ async function startServer() {
     });
   });
 
-  // Support up to 35MB JSON payloads for high-res photos & short mobile videos
-  app.use(express.json({ limit: '35mb' }));
+  // Support large uploads (up to 500MB) for high-res photos and long HD videos
+  app.use(express.json({ limit: '500mb' }));
+  app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
   // Serve uploaded photos/videos online across all devices
   app.use('/uploads', express.static(UPLOADS_DIR));

@@ -51,6 +51,15 @@ interface DraftMomentSlide {
   mediaType: 'image' | 'video';
   file?: File;
   fileName?: string;
+  fileSize?: number;
+}
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const PRESET_SAMPLE_MEDIA = [
@@ -247,11 +256,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const file = acceptedFiles[i];
       const isVid = file.type.startsWith('video/');
 
-      if (isVid && file.size > 95 * 1024 * 1024) {
-        setErrorMessage('Ukuran video terlalu besar (maksimal 95 MB untuk unggahan Cloudinary).');
-        continue;
-      }
-
       if (isVid) {
         newSlides.push({
           id: `slide_${now}_${i}`,
@@ -259,6 +263,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           mediaType: 'video',
           file,
           fileName: file.name,
+          fileSize: file.size,
         });
       } else {
         try {
@@ -269,6 +274,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             mediaType: 'image',
             file,
             fileName: file.name,
+            fileSize: file.size,
           });
         } catch {
           newSlides.push({
@@ -277,6 +283,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             mediaType: 'image',
             file,
             fileName: file.name,
+            fileSize: file.size,
           });
         }
       }
@@ -423,10 +430,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           slide.fileName ||
             `momen_${Date.now()}_${i + 1}.${slide.mediaType === 'video' ? 'mp4' : 'jpg'}`,
           'moments',
-          (pct) => {
+          (pct, loaded, total) => {
             if (navigator.onLine) {
+              const sizeInfo =
+                loaded && total
+                  ? ` (${formatFileSize(loaded)} / ${formatFileSize(total)} - ${pct}%)`
+                  : ` (${pct}%)`;
               setProgressStatus(
-                `Mengunggah ${slide.mediaType === 'video' ? 'video' : 'foto'}${slideLabel} ke Cloudinary (${pct}%)...`
+                `Mengunggah ${slide.mediaType === 'video' ? 'video' : 'foto'}${slideLabel}${sizeInfo}...`
               );
             }
           }
@@ -625,12 +636,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
           {/* Pilihan Sumber Media (Mendukung Multi-Upload untuk Swipe) */}
           <div className="space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <label className="block text-xs font-bold text-slate-800">
-                {draftSlides.length > 0
-                  ? `Foto / Video Momen (${draftSlides.length}/${MAX_MOMENT_MEDIA_ITEMS} Slide — Bisa Geser ke Samping)`
-                  : 'Pilih Foto / Video (Bisa Pilih Lebih dari 1 untuk Swipe)'}
-              </label>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="block text-xs font-bold text-slate-800">
+                  {draftSlides.length > 0
+                    ? `Foto / Video Momen (${draftSlides.length}/${MAX_MOMENT_MEDIA_ITEMS} Slide)`
+                    : 'Pilih Foto / Video Momen'}
+                </label>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  Bebas Ukuran Besar / Video HD (Tanpa Batas 95 MB)
+                </span>
+              </div>
 
               {draftSlides.length > 1 && (
                 <button
@@ -639,7 +655,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     setDraftSlides([]);
                     setActiveSlideIdx(0);
                   }}
-                  className="text-[11px] font-semibold text-rose-600 hover:underline cursor-pointer"
+                  className="text-[11px] font-semibold text-rose-600 hover:underline cursor-pointer self-start sm:self-auto"
                 >
                   Hapus Semua
                 </button>
@@ -801,9 +817,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       ))}
                     </div>
 
-                    {/* Slide Counter Top-Left */}
-                    <div className="absolute top-2.5 left-2.5 z-10 bg-black/65 backdrop-blur-xs text-white text-[11px] font-bold px-2.5 py-1 rounded-full tabular-nums">
-                      Slide {safeActiveIdx + 1} / {draftSlides.length}
+                    {/* Slide Counter & File Size Top-Left */}
+                    <div className="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5">
+                      <div className="bg-black/65 backdrop-blur-xs text-white text-[11px] font-bold px-2.5 py-1 rounded-full tabular-nums">
+                        Slide {safeActiveIdx + 1} / {draftSlides.length}
+                      </div>
+                      {activeSlide.fileSize ? (
+                        <div className="bg-black/65 backdrop-blur-xs text-emerald-300 text-[11px] font-bold px-2.5 py-1 rounded-full tabular-nums">
+                          {formatFileSize(activeSlide.fileSize)}
+                        </div>
+                      ) : null}
                     </div>
 
                     {/* Top-Right Actions on Active Slide: Unduh & Hapus Slide */}

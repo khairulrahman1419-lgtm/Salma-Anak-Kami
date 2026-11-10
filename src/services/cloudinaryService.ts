@@ -28,14 +28,20 @@ export interface CloudinaryUploadOptions {
   signal?: AbortSignal;
 }
 
+export type CloudinaryProgressCallback = (
+  percent: number,
+  loadedBytes?: number,
+  totalBytes?: number
+) => void;
+
 /**
  * Mengunggah File atau Blob foto/video langsung ke Cloudinary menggunakan unsigned upload preset.
- * Mendukung pelaporan persentase progres upload dan batas waktu (timeout/abort) ketat.
+ * Mendukung pelaporan persentase & megabytes progres upload serta batas waktu dinamis untuk file besar.
  */
 export function uploadToCloudinary(
   fileOrBlob: File | Blob,
   fileName = 'salma_media.jpg',
-  onProgress?: (percent: number) => void,
+  onProgress?: CloudinaryProgressCallback,
   options?: CloudinaryUploadOptions
 ): Promise<CloudinaryUploadResponse> {
   return new Promise((resolve, reject) => {
@@ -50,7 +56,10 @@ export function uploadToCloudinary(
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', cloudinaryConfig.uploadUrl, true);
-    xhr.timeout = options?.timeoutMs ?? 90_000;
+    // Batas waktu fleksibel & sangat lapang untuk file video/foto besar (15 menit untuk file >50MB)
+    xhr.timeout =
+      options?.timeoutMs ??
+      (fileOrBlob.size > 50 * 1024 * 1024 ? 900_000 : 300_000);
 
     const handleAbortSignal = () => {
       try {
@@ -75,7 +84,7 @@ export function uploadToCloudinary(
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable && event.total > 0) {
           const pct = Math.min(99, Math.round((event.loaded / event.total) * 100));
-          onProgress(pct);
+          onProgress(pct, event.loaded, event.total);
         }
       };
     }
