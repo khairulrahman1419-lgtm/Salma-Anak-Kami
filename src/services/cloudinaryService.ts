@@ -10,6 +10,16 @@
 
 import { cloudinaryConfig } from '../firebase.ts';
 
+/**
+ * Format Cloudinary Resmi:
+ * Endpoint: https://api.cloudinary.com/v1_1/la3st6qh/auto/upload
+ * Cloud Name: la3st6qh
+ * Upload Preset: wvulbv7y (Unsigned Upload)
+ */
+export const CLOUDINARY_CLOUD_NAME = 'la3st6qh';
+export const CLOUDINARY_UPLOAD_PRESET = 'wvulbv7y';
+export const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+
 export interface CloudinaryUploadResponse {
   asset_id?: string;
   public_id: string;
@@ -36,7 +46,8 @@ export type CloudinaryProgressCallback = (
 
 /**
  * Mengunggah File atau Blob foto/video langsung ke Cloudinary menggunakan unsigned upload preset.
- * Mendukung pelaporan persentase & megabytes progres upload serta batas waktu dinamis untuk file besar.
+ * Menggunakan format resmi: https://api.cloudinary.com/v1_1/la3st6qh/auto/upload
+ * dengan cloud_name 'la3st6qh' dan upload_preset 'wvulbv7y'.
  */
 export function uploadToCloudinary(
   fileOrBlob: File | Blob,
@@ -50,12 +61,17 @@ export function uploadToCloudinary(
       return;
     }
 
+    // Pastikan parameter dan endpoint resmi Cloudinary digunakan dengan benar
+    const cloudName = CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = CLOUDINARY_UPLOAD_PRESET;
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`;
+
     const formData = new FormData();
     formData.append('file', fileOrBlob, fileName);
-    formData.append('upload_preset', cloudinaryConfig.uploadPreset);
+    formData.append('upload_preset', uploadPreset);
 
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', cloudinaryConfig.uploadUrl, true);
+    xhr.open('POST', uploadUrl, true);
     // Batas waktu fleksibel & sangat lapang untuk file video/foto besar (15 menit untuk file >50MB)
     xhr.timeout =
       options?.timeoutMs ??
@@ -91,33 +107,49 @@ export function uploadToCloudinary(
 
     xhr.onload = () => {
       cleanupSignal();
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const parsed = JSON.parse(xhr.responseText) as CloudinaryUploadResponse;
-          const finalUrl = parsed.secure_url || parsed.url;
-          if (!finalUrl) {
-            reject(new Error('Respons Cloudinary tidak menyertakan secure_url.'));
-            return;
+
+      // Cek terlebih dahulu apakah xhr.status === 200
+      if (xhr.status !== 200) {
+        let serverErrorMsg = `HTTP ${xhr.status}`;
+        if (xhr.responseText) {
+          try {
+            const errJson = JSON.parse(xhr.responseText) as {
+              error?: { message?: string };
+              message?: string;
+            };
+            serverErrorMsg = errJson.error?.message || errJson.message || xhr.responseText.slice(0, 300);
+          } catch {
+            // Tampilkan pesan error asli dari server (misal teks atau HTML status)
+            const cleanText = xhr.responseText.replace(/<[^>]*>/g, '').trim().slice(0, 300);
+            serverErrorMsg = cleanText || `HTTP ${xhr.status} (${xhr.statusText || 'Gagal'})`;
           }
-          if (onProgress) onProgress(100);
-          resolve({
-            ...parsed,
-            secure_url: finalUrl.replace(/^http:\/\//i, 'https://'),
-          });
-        } catch {
-          reject(new Error('Gagal membaca respons JSON dari Cloudinary.'));
+        } else if (xhr.statusText) {
+          serverErrorMsg = `HTTP ${xhr.status}: ${xhr.statusText}`;
         }
-      } else {
-        let detail = `HTTP ${xhr.status}`;
-        try {
-          const errJson = JSON.parse(xhr.responseText) as { error?: { message?: string } };
-          if (errJson?.error?.message) {
-            detail = errJson.error.message;
-          }
-        } catch {
-          // gunakan kode status HTTP
+
+        reject(new Error(`Upload Cloudinary gagal (${xhr.status}): ${serverErrorMsg}`));
+        return;
+      }
+
+      // Jika xhr.status === 200, lakukan pembacaan respon sukses
+      try {
+        const parsed = JSON.parse(xhr.responseText) as CloudinaryUploadResponse;
+        const finalUrl = parsed.secure_url || parsed.url;
+        if (!finalUrl) {
+          reject(new Error('Respons Cloudinary tidak menyertakan secure_url.'));
+          return;
         }
-        reject(new Error(`Upload Cloudinary gagal: ${detail}`));
+        if (onProgress) onProgress(100);
+        resolve({
+          ...parsed,
+          secure_url: finalUrl.replace(/^http:\/\//i, 'https://'),
+        });
+      } catch (err: any) {
+        reject(
+          new Error(
+            `Format data respons Cloudinary tidak valid: ${err?.message || xhr.responseText?.slice(0, 150) || 'Respons kosong'}`
+          )
+        );
       }
     };
 

@@ -62,6 +62,7 @@ import {
   getStoredJournalId,
   joinPartnerCloudJournal,
   subscribeFamilyCloudJournal,
+  loadAuthoritativeCloudState,
   syncProfileToFirestore,
   syncMomentToFirestore,
   syncGrowthToFirestore,
@@ -181,7 +182,7 @@ export default function App() {
     setIsProfilePendingSync(hasPendingProfile);
   }, []);
 
-  // 1. Validasi Koneksi Firestore ("salma-anak-kami") & Pemulihan IndexedDB saat Aplikasi Boot
+  // 1. Validasi Koneksi Firestore ("salma-anak-kami") & Pemuatan Seluruh Data Utama Langsung dari Firestore
   useEffect(() => {
     void testFirestoreConnection();
 
@@ -192,21 +193,52 @@ export default function App() {
       setIsProfilePendingSync(hasPendingProfile);
       setPendingOfflineCount(queued.length);
 
+      // Muat cache IndexedDB terlebih dahulu agar tampilan instan
       const idbSnapshot = await hydrateStateFromIndexedDb();
-      if (idbSnapshot.profile && (hasPendingProfile || (typeof navigator !== 'undefined' && !navigator.onLine))) {
-        setProfile(idbSnapshot.profile);
-      } else if (idbSnapshot.profile && !localStorage.getItem(OFFLINE_STORAGE_KEYS.PROFILE)) {
+      if (idbSnapshot.profile) {
         setProfile(idbSnapshot.profile);
       }
+      if (idbSnapshot.moments?.length) setMoments(idbSnapshot.moments);
+      if (idbSnapshot.records?.length) setRecords(idbSnapshot.records);
+      if (idbSnapshot.milestones?.length) setMilestones(idbSnapshot.milestones);
+      if (idbSnapshot.parentingQuotes?.length) setParentingQuotes(idbSnapshot.parentingQuotes);
 
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        if (idbSnapshot.moments?.length) setMoments(idbSnapshot.moments);
-        if (idbSnapshot.records?.length) setRecords(idbSnapshot.records);
-        if (idbSnapshot.milestones?.length) setMilestones(idbSnapshot.milestones);
-        if (idbSnapshot.parentingQuotes?.length) setParentingQuotes(idbSnapshot.parentingQuotes);
+      // Muat seluruh data utama langsung dari Firestore agar foto & biodata tersimpan langsung muncul kembali
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        try {
+          const cloudData = await loadAuthoritativeCloudState(activeJournalId);
+          if (cloudData) {
+            if (cloudData.profile) {
+              setProfile(cloudData.profile);
+              persistLocalState(OFFLINE_STORAGE_KEYS.PROFILE, cloudData.profile);
+              if (!hasPendingProfile) {
+                hasPendingProfileSyncRef.current = false;
+                setIsProfilePendingSync(false);
+              }
+            }
+            if (cloudData.moments.length > 0) {
+              setMoments(cloudData.moments);
+              persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, cloudData.moments);
+            }
+            if (cloudData.records.length > 0) {
+              setRecords(cloudData.records);
+              persistLocalState(OFFLINE_STORAGE_KEYS.GROWTH_RECORDS, cloudData.records);
+            }
+            if (cloudData.milestones.length > 0) {
+              setMilestones(cloudData.milestones);
+              persistLocalState(OFFLINE_STORAGE_KEYS.MILESTONES, cloudData.milestones);
+            }
+            if (cloudData.quotes.length > 0) {
+              setParentingQuotes(cloudData.quotes);
+              persistLocalState(OFFLINE_STORAGE_KEYS.PARENTING_QUOTES, cloudData.quotes);
+            }
+          }
+        } catch (cloudErr) {
+          console.warn('Pemuatan cloud state saat boot dilewati:', cloudErr);
+        }
       }
     })();
-  }, []);
+  }, [activeJournalId]);
 
   // 2. Pengosongan Antrean Lokal Otomatis ke Cloudinary & Firestore saat Koneksi Merespons
   const flushPendingOfflineQueue = useCallback(async () => {
@@ -334,8 +366,13 @@ export default function App() {
           quotes: stateRef.current.quotes,
         },
         {
-          onProfile: (cloudProfile, isFromPartner) => {
-            if (hasPendingProfileSyncRef.current && !isFromPartner) {
+          onProfile: (cloudProfile, isFromPartner, hasPendingWrites) => {
+            if (!hasPendingWrites) {
+              hasPendingProfileSyncRef.current = false;
+              setIsProfilePendingSync(false);
+              void removeOfflineMutation('profile_latest');
+            }
+            if (hasPendingProfileSyncRef.current && !isFromPartner && hasPendingWrites) {
               return;
             }
             setProfile((prev) => ({ ...prev, ...cloudProfile }));
@@ -861,10 +898,10 @@ export default function App() {
     setProfile(updated);
     await persistLocalStateAsync(OFFLINE_STORAGE_KEYS.PROFILE, updated);
 
-    // 2. Try-catch + timeout maksimal 5 detik untuk proses upload Cloudinary & simpan Firestore
+    // 2. Upload Cloudinary (format resmi) & simpan Firestore secara real-time
     try {
       const syncedProfile = await syncProfileToFirestore(activeJournalId, updated, {
-        timeoutMs: 5000,
+        timeoutMs: 25000,
       });
 
       setProfile(syncedProfile);
@@ -876,7 +913,7 @@ export default function App() {
 
       void pushFamilyMutation('profile:update', syncedProfile);
       showToast(
-        'Biodata Salma, Ayah & Bunda langsung ter-update otomatis di HP Ayah & HP Bunda!'
+        'Biodata Salma, Ayah & Bunda berhasil tersinkronisasi ke Cloudinary & Firestore!'
       );
       return { syncedOnline: true };
     } catch (err) {

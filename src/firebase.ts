@@ -38,24 +38,38 @@ export interface SalmaCloudinaryConfig {
  * 1. Konfigurasi Firebase Firestore Proyek "salma-anak-kami"
  */
 export const firebaseConfig: SalmaFirebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyCA-oapuqrmK0lhq2IJF1Kvw6NqrAfutsc',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'salma-anak-kami.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'salma-anak-kami',
+  apiKey:
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_FIREBASE_API_KEY) ||
+    'AIzaSyCA-oapuqrmK0lhq2IJF1Kvw6NqrAfutsc',
+  authDomain:
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_FIREBASE_AUTH_DOMAIN) ||
+    'salma-anak-kami.firebaseapp.com',
+  projectId:
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_FIREBASE_PROJECT_ID) ||
+    'salma-anak-kami',
   storageBucket:
-    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'salma-anak-kami.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '327328080570',
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_FIREBASE_STORAGE_BUCKET) ||
+    'salma-anak-kami.firebasestorage.app',
+  messagingSenderId:
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_FIREBASE_MESSAGING_SENDER_ID) ||
+    '327328080570',
   appId:
-    import.meta.env.VITE_FIREBASE_APP_ID || '1:327328080570:web:641b88478a45edd7885883',
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_FIREBASE_APP_ID) ||
+    '1:327328080570:web:641b88478a45edd7885883',
 };
 
 /**
  * 2. Konfigurasi Cloudinary untuk Upload Foto & Video Salma
  */
 export const cloudinaryConfig: SalmaCloudinaryConfig = {
-  cloudName: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'la3st6qh',
-  uploadPreset: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'wvulbv7y',
+  cloudName:
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_CLOUDINARY_CLOUD_NAME) ||
+    'la3st6qh',
+  uploadPreset:
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_CLOUDINARY_UPLOAD_PRESET) ||
+    'wvulbv7y',
   uploadUrl:
-    import.meta.env.VITE_CLOUDINARY_UPLOAD_URL ||
+    (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_CLOUDINARY_UPLOAD_URL) ||
     'https://api.cloudinary.com/v1_1/la3st6qh/auto/upload',
 };
 

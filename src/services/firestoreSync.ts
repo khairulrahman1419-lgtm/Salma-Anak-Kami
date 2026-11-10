@@ -231,7 +231,7 @@ export async function syncProfileToFirestore(
   profile: ChildProfile,
   options?: { timeoutMs?: number }
 ): Promise<ChildProfile> {
-  const totalTimeoutMs = options?.timeoutMs ?? 5000;
+  const totalTimeoutMs = options?.timeoutMs ?? 25000;
   const startedAt = Date.now();
   const abortController = new AbortController();
   const abortTimer = setTimeout(() => abortController.abort(), totalTimeoutMs);
@@ -245,7 +245,7 @@ export async function syncProfileToFirestore(
       throw new Error('Perangkat sedang offline.');
     }
 
-    // 1. Upload foto profil baru & foto tambahan keluarga ke Cloudinary dalam batas waktu total (maks 5 detik)
+    // 1. Upload foto profil baru & foto tambahan keluarga ke Cloudinary dalam batas waktu
     const rawExtras = (profile.extraFamilyPhotos || []).slice(0, MAX_EXTRA_FAMILY_PHOTOS);
     const uploadBudgetMs = Math.max(500, totalTimeoutMs - (Date.now() - startedAt));
     const [avatarUrl, fatherAvatarUrl, motherAvatarUrl, ...uploadedExtraUrls] =
@@ -279,7 +279,7 @@ export async function syncProfileToFirestore(
           ),
         ]),
         uploadBudgetMs,
-        'Waktu unggah foto ke Cloudinary melebihi batas 5 detik.'
+        'Waktu unggah foto ke Cloudinary melebihi batas waktu.'
       );
 
     const upgradedExtras: FamilyExtraPhoto[] = rawExtras
@@ -302,11 +302,11 @@ export async function syncProfileToFirestore(
       extraFamilyPhotos: upgradedExtras,
     };
 
-    // 2. Simpan dokumen biodata ke Cloud Firestore dalam sisa batas waktu total (maks 5 detik)
+    // 2. Simpan dokumen biodata ke Cloud Firestore dalam sisa batas waktu total
     const elapsedMs = Date.now() - startedAt;
     const remainingFirestoreMs = totalTimeoutMs - elapsedMs;
     if (remainingFirestoreMs <= 150) {
-      throw new Error('Waktu sinkronisasi Cloud melebihi batas 5 detik.');
+      throw new Error('Waktu sinkronisasi Cloud Firestore melebihi batas waktu.');
     }
 
     try {
@@ -354,7 +354,7 @@ export async function syncProfileToFirestore(
           { merge: true }
         ),
         remainingFirestoreMs,
-        'Waktu simpan Cloud Firestore melebihi batas 5 detik.'
+        'Waktu simpan Cloud Firestore melebihi batas waktu.'
       );
     } catch (firestoreErr) {
       const msg = firestoreErr instanceof Error ? firestoreErr.message : String(firestoreErr);
@@ -609,6 +609,180 @@ async function seedInitialSalmaFirestoreIfEmpty(
   }
 }
 
+export interface AuthoritativeCloudData {
+  profile?: ChildProfile;
+  moments: MomentItem[];
+  records: GrowthRecord[];
+  milestones: MilestoneChecklistItem[];
+  quotes: ParentingQuoteItem[];
+}
+
+/**
+ * Memuat seluruh data utama langsung dari Cloud Firestore ("salma-anak-kami") saat aplikasi
+ * dibuka pertama kali agar foto dan biodata yang tersimpan di cloud langsung muncul tanpa delay.
+ */
+export async function loadAuthoritativeCloudState(
+  journalId: string
+): Promise<AuthoritativeCloudData | null> {
+  const cleanJournalId = sanitizeDocId(journalId || SHARED_SALMA_JOURNAL_ID);
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return null;
+  }
+
+  try {
+    const journalRef = doc(db, 'journals', cleanJournalId);
+    const journalSnap = await getDoc(journalRef);
+
+    let parsedProfile: ChildProfile | undefined;
+    if (journalSnap.exists()) {
+      const d = journalSnap.data();
+      const parsedExtraPhotos: FamilyExtraPhoto[] | undefined = Array.isArray(d.extraFamilyPhotos)
+        ? d.extraFamilyPhotos
+            .slice(0, MAX_EXTRA_FAMILY_PHOTOS)
+            .map((raw: any, idx: number) => ({
+              id: String(raw?.id || `extra_${idx + 1}`),
+              url: String(raw?.url || ''),
+              ...(raw?.label ? { label: String(raw.label) } : {}),
+            }))
+            .filter((item: FamilyExtraPhoto) => Boolean(item.url))
+        : undefined;
+
+      parsedProfile = {
+        id: 'salma_profile',
+        name: String(d.name || 'Salma Nur Khalisa'),
+        nickname: String(d.nickname || 'Salma'),
+        birthDate: String(d.birthDate || '2026-03-25'),
+        gender: d.gender === 'male' ? 'male' : 'female',
+        bloodType: d.bloodType ? String(d.bloodType) : 'O+',
+        avatarUrl: String(d.avatarUrl || '/src/assets/images/moment_eating_puree_1792555107552.jpg'),
+        fatherName: String(d.fatherName || 'Ayah Rahman'),
+        fatherInfo: d.fatherInfo ? String(d.fatherInfo) : undefined,
+        fatherAvatarUrl: d.fatherAvatarUrl
+          ? String(d.fatherAvatarUrl)
+          : '/src/assets/images/moment_father_play_1792555577232.jpg',
+        motherName: d.motherName ? String(d.motherName) : 'Bunda',
+        motherInfo: d.motherInfo ? String(d.motherInfo) : undefined,
+        motherAvatarUrl: d.motherAvatarUrl
+          ? String(d.motherAvatarUrl)
+          : '/src/assets/images/moment_eating_puree_1792555107552.jpg',
+        extraFamilyPhotos: parsedExtraPhotos,
+        birthWeightKg: Number(d.birthWeightKg) || 3.3,
+        birthHeightCm: Number(d.birthHeightCm) || 49.5,
+        birthHeadCircumferenceCm: Number(d.birthHeadCircumferenceCm) || 34.5,
+        specialNotes: d.specialNotes ? String(d.specialNotes) : undefined,
+      };
+    }
+
+    const [momentsSnap, recordsSnap, milestonesSnap, quotesSnap] = await Promise.all([
+      getDocs(collection(db, 'journals', cleanJournalId, 'moments')),
+      getDocs(collection(db, 'journals', cleanJournalId, 'growth_records')),
+      getDocs(collection(db, 'journals', cleanJournalId, 'milestones')),
+      getDocs(collection(db, 'journals', cleanJournalId, 'parenting_quotes')),
+    ]);
+
+    const parsedMoments: MomentItem[] = momentsSnap.docs.map((docSnap) => {
+      const d = docSnap.data();
+      const resolvedCreated =
+        typeof d.clientCreatedAt === 'string' && d.clientCreatedAt
+          ? d.clientCreatedAt
+          : typeof d.createdAt?.toDate === 'function'
+          ? d.createdAt.toDate().toISOString()
+          : new Date().toISOString();
+
+      const parsedMediaItems: MomentMediaSlide[] | undefined = Array.isArray(d.mediaItems)
+        ? d.mediaItems
+            .slice(0, MAX_MOMENT_MEDIA_ITEMS)
+            .map((raw: any, idx: number) => ({
+              id: String(raw?.id || `${docSnap.id}_slide_${idx}`),
+              url: String(raw?.url || ''),
+              mediaType: raw?.mediaType === 'video' ? ('video' as const) : ('image' as const),
+            }))
+            .filter((s: MomentMediaSlide) => Boolean(s.url))
+        : undefined;
+
+      return {
+        id: docSnap.id,
+        title: String(d.title || ''),
+        date: String(d.date || ''),
+        mediaType: d.mediaType === 'video' ? 'video' : 'image',
+        mediaUrl: String(d.mediaUrl || ''),
+        mediaItems: parsedMediaItems && parsedMediaItems.length > 0 ? parsedMediaItems : undefined,
+        category: d.category,
+        notes: String(d.notes || ''),
+        weightKg: Number(d.weightKg) > 0 ? Number(d.weightKg) : undefined,
+        heightCm: Number(d.heightCm) > 0 ? Number(d.heightCm) : undefined,
+        headCircumferenceCm:
+          Number(d.headCircumferenceCm) > 0 ? Number(d.headCircumferenceCm) : undefined,
+        googleDriveSynced: Boolean(d.googleDriveSynced),
+        googleDriveFileId: d.googleDriveFileId ? String(d.googleDriveFileId) : undefined,
+        googleDriveWebViewLink: d.googleDriveWebViewLink
+          ? String(d.googleDriveWebViewLink)
+          : undefined,
+        createdAt: resolvedCreated,
+      };
+    });
+    parsedMoments.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    const parsedRecords: GrowthRecord[] = recordsSnap.docs.map((docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: docSnap.id,
+        date: String(d.date || ''),
+        ageMonths: Number(d.ageMonths) || 0,
+        weightKg: Number(d.weightKg) || 0,
+        heightCm: Number(d.heightCm) || 0,
+        headCircumferenceCm:
+          Number(d.headCircumferenceCm) > 0 ? Number(d.headCircumferenceCm) : undefined,
+        notes: d.notes ? String(d.notes) : undefined,
+        sourceMomentId: d.sourceMomentId ? String(d.sourceMomentId) : undefined,
+      };
+    });
+    parsedRecords.sort((a, b) => a.date.localeCompare(b.date));
+
+    const parsedMilestones: MilestoneChecklistItem[] = milestonesSnap.docs.map((docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: docSnap.id,
+        domain: d.domain,
+        ageRangeLabel: String(d.ageRangeLabel || ''),
+        minAgeMonths: Number(d.minAgeMonths) || 0,
+        maxAgeMonths: Number(d.maxAgeMonths) || 6,
+        title: String(d.title || ''),
+        description: String(d.description || ''),
+        notes: d.notes ? String(d.notes) : undefined,
+        completed: Boolean(d.completed),
+        completedDate: d.completedDate ? String(d.completedDate) : undefined,
+      };
+    });
+    parsedMilestones.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+
+    const parsedQuotes: ParentingQuoteItem[] = quotesSnap.docs.map((docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: docSnap.id,
+        orderIndex: Number(d.orderIndex) || 0,
+        text: String(d.text || ''),
+        updatedAt:
+          typeof d.updatedAt?.toDate === 'function'
+            ? d.updatedAt.toDate().toISOString()
+            : undefined,
+      };
+    });
+    parsedQuotes.sort((a, b) => a.orderIndex - b.orderIndex);
+
+    return {
+      profile: parsedProfile,
+      moments: parsedMoments,
+      records: parsedRecords,
+      milestones: parsedMilestones,
+      quotes: parsedQuotes,
+    };
+  } catch (err) {
+    console.warn('Pemuatan data utama dari Firestore dilewati / offline:', err);
+    return null;
+  }
+}
+
 /**
  * Berlangganan secara real-time ke seluruh koleksi Cloud Firestore `salma-anak-kami`
  * sehingga HP Ayah & HP Bunda selalu ter-update otomatis detik itu juga.
@@ -623,7 +797,7 @@ export function subscribeFamilyCloudJournal(
     quotes: ParentingQuoteItem[];
   },
   callbacks: {
-    onProfile: (p: ChildProfile, isFromPartnerDevice: boolean) => void;
+    onProfile: (p: ChildProfile, isFromPartnerDevice: boolean, hasPendingWrites: boolean) => void;
     onMoments: (m: MomentItem[], isFromPartnerDevice: boolean) => void;
     onRecords: (r: GrowthRecord[], isFromPartnerDevice: boolean) => void;
     onMilestones: (ms: MilestoneChecklistItem[], isFromPartnerDevice: boolean) => void;
@@ -690,7 +864,8 @@ export function subscribeFamilyCloudJournal(
             Number(d.birthHeadCircumferenceCm) || seedState.profile.birthHeadCircumferenceCm,
           specialNotes: d.specialNotes ? String(d.specialNotes) : undefined,
         },
-        isRemoteUpdate
+        isRemoteUpdate,
+        snap.metadata.hasPendingWrites
       );
     },
     (error) => {
