@@ -65,6 +65,7 @@ import {
   loadAuthoritativeCloudState,
   syncProfileToFirestore,
   syncMomentToFirestore,
+  deleteMomentFromFirestore,
   syncGrowthToFirestore,
   syncMilestoneToFirestore,
   syncParentingQuoteToFirestore,
@@ -492,6 +493,16 @@ export default function App() {
         });
         setSelectedMoment((curr) => (curr && curr.id === updatedMoment.id ? updatedMoment : curr));
       },
+      onMomentDeleted: (deletedMomentId) => {
+        setMoments((prev) => {
+          const next = prev.filter((m) => m.id !== deletedMomentId);
+          persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, next);
+          return next;
+        });
+        setSelectedMoment((curr) =>
+          curr && curr.id === deletedMomentId ? null : curr
+        );
+      },
       onGrowthCreated: (incomingRecord) => {
         setRecords((prev) => {
           const existingIdx = prev.findIndex(
@@ -828,6 +839,31 @@ export default function App() {
         ? `Perubahan momen "${updatedMoment.title}" tersimpan offline!`
         : `Perubahan momen "${updatedMoment.title}" langsung tersinkronisasi ke HP Ayah & Bunda!`
     );
+  };
+
+  const handleDeleteMoment = async (momentToDelete: MomentItem) => {
+    setSelectedMoment(null);
+    setMoments((prevMoments) => {
+      const next = prevMoments.filter((m) => m.id !== momentToDelete.id);
+      persistLocalState(OFFLINE_STORAGE_KEYS.MOMENTS, next);
+      return next;
+    });
+
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      void enqueueOfflineMutation(
+        'moment:delete',
+        momentToDelete,
+        `moment_delete_${momentToDelete.id}`
+      ).then(refreshPendingOfflineCount);
+    } else {
+      void pushFamilyMutation('moment:delete', { id: momentToDelete.id });
+      void deleteMomentFromFirestore(activeJournalId, momentToDelete).catch((err) =>
+        console.warn('Gagal menghapus momen dari Firestore:', err)
+      );
+    }
+
+    showToast(`Momen "${momentToDelete.title}" dan file medianya berhasil dihapus bersih.`);
   };
 
   const handleToggleMilestone = (milestoneId: string) => {
@@ -1413,6 +1449,7 @@ export default function App() {
               setSelectedMomentSlideIndex(0);
             }}
             onEditMoment={handleOpenEditMoment}
+            onDeleteMoment={handleDeleteMoment}
             onNotify={showToast}
             onPrev={
               currentMomentIndex > 0

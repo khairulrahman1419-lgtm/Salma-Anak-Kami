@@ -29,6 +29,7 @@ export interface RealtimeSyncHandlers {
   onProfileUpdated: (profile: ChildProfile, isFromOtherDevice: boolean) => void;
   onMomentCreated: (moment: MomentItem, isFromOtherDevice: boolean) => void;
   onMomentUpdated: (moment: MomentItem, isFromOtherDevice: boolean) => void;
+  onMomentDeleted?: (momentId: string, isFromOtherDevice: boolean) => void;
   onGrowthCreated: (record: GrowthRecord, isFromOtherDevice: boolean) => void;
   onMilestoneToggled: (milestone: MilestoneChecklistItem, isFromOtherDevice: boolean) => void;
   onQuoteUpdated?: (quote: ParentingQuoteItem, isFromOtherDevice: boolean) => void;
@@ -47,6 +48,7 @@ export async function pushFamilyMutation(
     | 'profile:update'
     | 'moment:create'
     | 'moment:update'
+    | 'moment:delete'
     | 'growth:create'
     | 'milestone:toggle'
     | 'quote:update'
@@ -145,6 +147,16 @@ export function connectRealtimeFamilySync(handlers: RealtimeSyncHandlers): () =>
               case 'moment:update':
                 handlers.onMomentUpdated(msg.payload as MomentItem, isFromOtherDevice);
                 break;
+              case 'moment:delete': {
+                const deletedId =
+                  typeof msg.payload === 'string'
+                    ? msg.payload
+                    : (msg.payload as { id?: string })?.id || '';
+                if (deletedId) {
+                  handlers.onMomentDeleted?.(deletedId, isFromOtherDevice);
+                }
+                break;
+              }
               case 'growth:create':
                 handlers.onGrowthCreated(msg.payload as GrowthRecord, isFromOtherDevice);
                 break;

@@ -169,11 +169,12 @@ export const MomentMediaCarousel: React.FC<MomentMediaCarouselProps> = ({
                     ref={(el) => {
                       videoRefsMap.current[slideKey] = el;
                     }}
-                    src={streamUrl}
                     poster={posterUrl || undefined}
                     muted={isMuted}
+                    controls
                     playsInline
                     preload="metadata"
+                    {...({ 'webkit-playsinline': 'true' } as any)}
                     onTimeUpdate={(e) => {
                       const v = e.currentTarget;
                       if (v.duration > 0) {
@@ -185,7 +186,12 @@ export const MomentMediaCarousel: React.FC<MomentMediaCarouselProps> = ({
                       setVideoProgress(0);
                     }}
                     className="w-full h-full object-cover"
-                  />
+                  >
+                    <source src={streamUrl} type="video/mp4" />
+                    <source src={slide.url} type="video/mp4" />
+                    <source src={slide.url} type="video/quicktime" />
+                    <source src={slide.url} />
+                  </video>
 
                   {/* Inline Active Player Overlay */}
                   {isCurrentSlidePlaying ? (

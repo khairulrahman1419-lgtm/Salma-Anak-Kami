@@ -258,6 +258,27 @@ async function startServer() {
     }
   });
 
+  // 2b. Endpoint untuk menghapus bersih file media lokal jika dihapus oleh pengguna
+  app.post('/api/delete-media', (req, res) => {
+    try {
+      const { url } = req.body as { url?: string };
+      if (!url) {
+        res.json({ success: true });
+        return;
+      }
+      if (url.startsWith('/uploads/')) {
+        const fileName = path.basename(url);
+        const targetPath = path.join(UPLOADS_DIR, fileName);
+        if (fs.existsSync(targetPath)) {
+          fs.unlinkSync(targetPath);
+        }
+      }
+      res.json({ success: true });
+    } catch {
+      res.json({ success: false });
+    }
+  });
+
   // 3. Real-time idempotent family journal mutations (broadcasts live to HP Ayah & HP Bunda)
   app.post('/api/family-sync', (req, res) => {
     try {
@@ -333,6 +354,29 @@ async function startServer() {
             senderId: senderId || '',
             updatedAt: nowIso,
           });
+          break;
+        }
+
+        case 'moment:delete': {
+          const momentId =
+            typeof payload === 'string'
+              ? payload
+              : (payload as { id?: string })?.id || '';
+          if (momentId) {
+            familyState = {
+              ...familyState,
+              moments: familyState.moments.filter((m) => m.id !== momentId),
+              updatedAt: nowIso,
+            };
+            saveServerFamilyState(familyState);
+            broadcastToAllClients({
+              type: 'sync:event',
+              action: 'moment:delete',
+              payload: { id: momentId },
+              senderId: senderId || '',
+              updatedAt: nowIso,
+            });
+          }
           break;
         }
 

@@ -285,11 +285,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       onTouchStart={resetControlsTimeout}
       className={`relative group bg-black overflow-hidden flex items-center justify-center select-none outline-none ${className}`}
     >
-      {/* HTML5 Video Tag with Auto-Streaming Optimization */}
+      {/* HTML5 Video Tag with Auto-Streaming & Mobile iOS/Android Optimization */}
       <video
         ref={videoRef}
+        controls
         playsInline
-        preload="auto"
+        preload="metadata"
+        {...({ 'webkit-playsinline': 'true' } as any)}
         autoPlay={autoPlay}
         poster={resolvedPoster || undefined}
         onTimeUpdate={() => {
@@ -329,6 +331,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         className="w-full h-full max-h-[72vh] object-contain cursor-pointer"
       >
         <source src={streamingUrl} type="video/mp4" />
+        <source src={src} type="video/mp4" />
+        <source src={src} type="video/quicktime" />
         <source src={src} />
         Browser Anda tidak mendukung pemutar video HTML5.
       </video>

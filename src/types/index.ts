@@ -37,17 +37,21 @@ export type MomentCategory =
   | 'ulang_tahun'
   | 'lainnya';
 
+export type MediaStorageProvider = 'cloudinary' | 'firebase';
+
 export interface MomentMediaSlide {
   id: string;
   url: string;
-  mediaType: 'image' | 'video';
+  mediaType: 'image' | 'video' | 'photo';
+  storageProvider?: MediaStorageProvider;
 }
 
 export interface MomentItem {
   id: string;
   title: string;
   date: string; // YYYY-MM-DD
-  mediaType: 'image' | 'video';
+  mediaType: 'image' | 'video' | 'photo';
+  storageProvider?: MediaStorageProvider;
   mediaUrl: string;
   mediaItems?: MomentMediaSlide[];
   thumbnailUrl?: string;

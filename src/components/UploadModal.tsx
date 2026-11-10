@@ -52,7 +52,7 @@ interface UploadModalProps {
 interface DraftMomentSlide {
   id: string;
   previewUrl: string;
-  mediaType: 'image' | 'video';
+  mediaType: 'image' | 'video' | 'photo';
   file?: File;
   fileName?: string;
   fileSize?: number;
@@ -260,7 +260,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
     for (let i = 0; i < acceptedFiles.length; i++) {
       const file = acceptedFiles[i];
-      const isVid = file.type.startsWith('video/');
+      const isVid = file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(file.name);
+
+      // Proteksi & Validasi ukuran video maksimal 150 MB
+      if (isVid && file.size > 150 * 1024 * 1024) {
+        setErrorMessage(
+          'Ukuran video terlalu besar (Maksimal 150 MB). Mohon persingkat durasi atau kompres video Anda.'
+        );
+        continue;
+      }
 
       if (isVid) {
         newSlides.push({
@@ -359,6 +367,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
     if (!notes.trim()) {
       setErrorMessage('Silakan tuliskan catatan singkat atau kisah momen ini.');
+      return;
+    }
+
+    // Validasi & Proteksi Ukuran Video Maksimal 150 MB
+    const oversizedVideo = draftSlides.find(
+      (s) =>
+        s.file &&
+        (s.mediaType === 'video' || s.file.type.startsWith('video/')) &&
+        s.file.size > 150 * 1024 * 1024
+    );
+    if (oversizedVideo) {
+      setErrorMessage(
+        'Ukuran video terlalu besar (Maksimal 150 MB). Mohon persingkat durasi atau kompres video Anda.'
+      );
       return;
     }
 
@@ -575,7 +597,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     : 'Pilih Foto / Video Momen'}
                 </label>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-                  Bebas Ukuran Besar / Video HD (Tanpa Batas 95 MB)
+                  Video Maksimal 150 MB • Foto Bebas
                 </span>
               </div>
 
@@ -729,13 +751,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         >
                           {slide.mediaType === 'video' ? (
                             <video
-                              src={slide.previewUrl}
                               poster={getVideoPosterUrl(slide.previewUrl) || undefined}
                               controls
                               playsInline
                               preload="metadata"
+                              {...({ 'webkit-playsinline': 'true' } as any)}
                               className="w-full h-full object-contain"
-                            />
+                            >
+                              <source src={slide.previewUrl} type="video/mp4" />
+                              <source src={slide.previewUrl} type="video/quicktime" />
+                              <source src={slide.previewUrl} />
+                            </video>
                           ) : (
                             <img
                               src={slide.previewUrl}

@@ -19,6 +19,7 @@ import {
   getDocs,
   getDocFromServer,
   setDoc,
+  deleteDoc,
   onSnapshot,
   serverTimestamp,
   type Unsubscribe,
@@ -27,6 +28,7 @@ import { auth, db } from '../firebase.ts';
 import {
   uploadAvatarToCloudinaryWithTimeout,
   uploadChildMediaOnline,
+  deleteMomentMediaFiles,
 } from './mediaFirebaseStorage.ts';
 import { getClientDeviceId } from './realtimeFamilySync.ts';
 import {
@@ -153,7 +155,7 @@ async function ensureCloudinaryOrShortUrl(
   url: string | undefined,
   fallbackUrl: string,
   folderCategory: 'moments' | 'avatars' = 'moments',
-  mediaType: 'image' | 'video' = 'image'
+  mediaType: 'image' | 'video' | 'photo' = 'image'
 ): Promise<string> {
   const target = (url || fallbackUrl).trim();
   if (!target) return fallbackUrl;
@@ -405,8 +407,15 @@ export async function syncMomentToFirestore(
   const primarySlide = resolvedSlides[0] || {
     id: `${momentId}_slide_0`,
     url: '/src/assets/images/moment_first_steps_1792502523399.jpg',
-    mediaType: moment.mediaType === 'video' ? 'video' : 'image',
+    mediaType: moment.mediaType === 'video' ? 'video' : 'photo',
+    storageProvider: moment.storageProvider || 'cloudinary',
   };
+
+  const primaryMediaType: 'photo' | 'video' =
+    primarySlide.mediaType === 'video' ? 'video' : 'photo';
+  const primaryProvider: 'cloudinary' | 'firebase' =
+    primarySlide.storageProvider ||
+    (primarySlide.url.includes('firebasestorage') ? 'firebase' : 'cloudinary');
 
   const payload: Record<string, unknown> = {
     journalId: cleanJournalId,
@@ -416,12 +425,16 @@ export async function syncMomentToFirestore(
     date: /^\d{4}-\d{2}-\d{2}$/.test(moment.date)
       ? moment.date
       : new Date().toISOString().slice(0, 10),
-    mediaType: primarySlide.mediaType,
+    mediaType: primaryMediaType,
+    storageProvider: primaryProvider,
     mediaUrl: primarySlide.url,
     mediaItems: resolvedSlides.map((s) => ({
       id: sanitizeDocId(s.id),
       url: clampStr(s.url, 2048, ''),
-      mediaType: s.mediaType === 'video' ? 'video' : 'image',
+      mediaType: s.mediaType === 'video' ? 'video' : 'photo',
+      storageProvider:
+        s.storageProvider ||
+        (s.url.includes('firebasestorage') ? 'firebase' : 'cloudinary'),
     })),
     category: moment.category,
     notes: clampStr(moment.notes, 2000, '-'),
@@ -445,6 +458,33 @@ export async function syncMomentToFirestore(
     });
   } catch (err) {
     handleFirestoreError(err, isUpdate ? OperationType.UPDATE : OperationType.CREATE, momentPath);
+  }
+}
+
+/**
+ * Menghapus dokumen momen dari Cloud Firestore dan membersihkan file medianya
+ * secara tuntas dari Firebase Storage (jika video) atau Cloudinary / server (jika foto)
+ */
+export async function deleteMomentFromFirestore(
+  journalId: string,
+  moment: MomentItem
+): Promise<void> {
+  const cleanJournalId = sanitizeDocId(journalId || SHARED_SALMA_JOURNAL_ID);
+  const momentId = sanitizeDocId(moment.id);
+  const momentPath = `journals/${cleanJournalId}/moments/${momentId}`;
+
+  // 1. Hapus dokumen dari Firestore
+  try {
+    await deleteDoc(doc(db, 'journals', cleanJournalId, 'moments', momentId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, momentPath);
+  }
+
+  // 2. Bersihkan file media secara bersih dari Firebase Storage & Cloudinary / server lokal
+  try {
+    await deleteMomentMediaFiles(moment);
+  } catch (err) {
+    console.warn('Gagal membersihkan aset media momen:', err);
   }
 }
 
@@ -692,20 +732,33 @@ export async function loadAuthoritativeCloudState(
       const parsedMediaItems: MomentMediaSlide[] | undefined = Array.isArray(d.mediaItems)
         ? d.mediaItems
             .slice(0, MAX_MOMENT_MEDIA_ITEMS)
-            .map((raw: any, idx: number) => ({
-              id: String(raw?.id || `${docSnap.id}_slide_${idx}`),
-              url: String(raw?.url || ''),
-              mediaType: raw?.mediaType === 'video' ? ('video' as const) : ('image' as const),
-            }))
+            .map((raw: any, idx: number) => {
+              const url = String(raw?.url || '');
+              const isVid = raw?.mediaType === 'video' || /\.(mp4|mov|webm)/i.test(url);
+              return {
+                id: String(raw?.id || `${docSnap.id}_slide_${idx}`),
+                url,
+                mediaType: isVid ? ('video' as const) : ('photo' as const),
+                storageProvider:
+                  raw?.storageProvider ||
+                  (url.includes('firebasestorage') ? 'firebase' : 'cloudinary'),
+              };
+            })
             .filter((s: MomentMediaSlide) => Boolean(s.url))
         : undefined;
+
+      const topUrl = String(d.mediaUrl || '');
+      const isTopVid = d.mediaType === 'video' || /\.(mp4|mov|webm)/i.test(topUrl);
 
       return {
         id: docSnap.id,
         title: String(d.title || ''),
         date: String(d.date || ''),
-        mediaType: d.mediaType === 'video' ? 'video' : 'image',
-        mediaUrl: String(d.mediaUrl || ''),
+        mediaType: isTopVid ? 'video' : 'photo',
+        storageProvider:
+          d.storageProvider ||
+          (topUrl.includes('firebasestorage') ? 'firebase' : 'cloudinary'),
+        mediaUrl: topUrl,
         mediaItems: parsedMediaItems && parsedMediaItems.length > 0 ? parsedMediaItems : undefined,
         category: d.category,
         notes: String(d.notes || ''),
@@ -903,20 +956,33 @@ export function subscribeFamilyCloudJournal(
         const parsedMediaItems: MomentMediaSlide[] | undefined = Array.isArray(d.mediaItems)
           ? d.mediaItems
               .slice(0, MAX_MOMENT_MEDIA_ITEMS)
-              .map((raw: any, idx: number) => ({
-                id: String(raw?.id || `${docSnap.id}_slide_${idx}`),
-                url: String(raw?.url || ''),
-                mediaType: raw?.mediaType === 'video' ? ('video' as const) : ('image' as const),
-              }))
+              .map((raw: any, idx: number) => {
+                const url = String(raw?.url || '');
+                const isVid = raw?.mediaType === 'video' || /\.(mp4|mov|webm)/i.test(url);
+                return {
+                  id: String(raw?.id || `${docSnap.id}_slide_${idx}`),
+                  url,
+                  mediaType: isVid ? ('video' as const) : ('photo' as const),
+                  storageProvider:
+                    raw?.storageProvider ||
+                    (url.includes('firebasestorage') ? 'firebase' : 'cloudinary'),
+                };
+              })
               .filter((s: MomentMediaSlide) => Boolean(s.url))
           : undefined;
+
+        const topUrl = String(d.mediaUrl || '');
+        const isTopVid = d.mediaType === 'video' || /\.(mp4|mov|webm)/i.test(topUrl);
 
         return {
           id: docSnap.id,
           title: String(d.title || ''),
           date: String(d.date || ''),
-          mediaType: d.mediaType === 'video' ? 'video' : 'image',
-          mediaUrl: String(d.mediaUrl || ''),
+          mediaType: isTopVid ? 'video' : 'photo',
+          storageProvider:
+            d.storageProvider ||
+            (topUrl.includes('firebasestorage') ? 'firebase' : 'cloudinary'),
+          mediaUrl: topUrl,
           mediaItems: parsedMediaItems && parsedMediaItems.length > 0 ? parsedMediaItems : undefined,
           category: d.category,
           notes: String(d.notes || ''),

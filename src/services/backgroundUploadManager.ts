@@ -11,7 +11,10 @@
  */
 
 import type { UploadTask } from 'firebase/storage';
-import { uploadChildMediaOnline } from './mediaFirebaseStorage.ts';
+import {
+  uploadChildMediaOnline,
+  uploadChildMediaWithProviderInfo,
+} from './mediaFirebaseStorage.ts';
 import { syncMomentToFirestore, syncGrowthToFirestore } from './firestoreSync.ts';
 import { uploadMediaToGoogleDrive } from './googleDriveClient.ts';
 import type {
@@ -34,7 +37,7 @@ export interface BackgroundUploadDraftSlide {
   id: string;
   file?: File;
   previewUrl: string;
-  mediaType: 'image' | 'video';
+  mediaType: 'image' | 'video' | 'photo';
   fileName?: string;
   fileSize?: number;
 }
@@ -206,13 +209,13 @@ class BackgroundUploadManager {
         task.currentTotalBytes = slideSize;
         task.currentLoadedBytes = 0;
         task.currentSlideProgress = 0;
-        task.statusMessage = `Mengunggah ${isVideo ? 'Video' : 'Foto'}${slidePrefix}: 0 B / ${formatByteSize(
+        task.statusMessage = `Mengunggah ${isVideo ? 'Video' : 'Foto'}${slidePrefix}: 0% (0 B / ${formatByteSize(
           slideSize
-        )} (0%)`;
+        )})`;
         this.notify();
 
-        // Unggah media (Cloudinary resmi -> Seamless fallback ke Firebase Storage)
-        const onlineUrl = await uploadChildMediaOnline(
+        // Unggah media: Video langsung ke Firebase Storage (videos/), Foto ke Cloudinary
+        const uploadResult = await uploadChildMediaWithProviderInfo(
           slide.file ? slide.file : slide.previewUrl,
           slide.fileName ||
             `momen_${Date.now()}_${i + 1}.${isVideo ? 'mp4' : 'jpg'}`,
@@ -233,17 +236,10 @@ class BackgroundUploadManager {
             task.overallLoadedBytes = sumLoaded;
             task.overallPercent = overallPct;
 
-            const byteText =
-              currentTotal > 0
-                ? `${formatByteSize(currentLoaded)} / ${formatByteSize(currentTotal)}`
-                : `${pct}%`;
-
-            const providerLabel =
-              task.provider === 'firebase_storage' ? ' [Firebase Storage]' : '';
-
+            // Format sesuai permintaan: "Mengunggah Video: 45% (35 MB / 80 MB)"
             task.statusMessage = `Mengunggah ${
               isVideo ? 'Video' : 'Foto'
-            }${slidePrefix}: ${byteText} (${pct}%)${providerLabel}`;
+            }${slidePrefix}: ${pct}% (${formatByteSize(currentLoaded)} / ${formatByteSize(currentTotal)})`;
             this.notify();
           },
           {
@@ -262,8 +258,9 @@ class BackgroundUploadManager {
 
         uploadedSlides.push({
           id: slide.id || `slide_${Date.now()}_${i + 1}`,
-          url: onlineUrl,
-          mediaType: slide.mediaType,
+          url: uploadResult.url,
+          mediaType: uploadResult.mediaType,
+          storageProvider: uploadResult.storageProvider,
         });
       }
 
@@ -327,6 +324,7 @@ class BackgroundUploadManager {
         title: payload.momentDraft.title.trim(),
         date: payload.momentDraft.date,
         mediaType: coverSlide.mediaType,
+        storageProvider: coverSlide.storageProvider,
         mediaUrl: coverSlide.url,
         mediaItems: uploadedSlides,
         category: payload.momentDraft.category,

@@ -7,10 +7,19 @@
  * yang akan diunggah otomatis ke Cloudinary begitu HP kembali online.
  */
 
-import { ref, uploadBytes, uploadBytesResumable, getDownloadURL, type UploadTask } from 'firebase/storage';
+import {
+  ref,
+  uploadBytes,
+  uploadBytesResumable,
+  getDownloadURL,
+  deleteObject,
+  type UploadTask,
+} from 'firebase/storage';
 import { auth, storage } from '../firebase.ts';
 import { uploadToCloudinary, uploadToCloudinaryChunked } from './cloudinaryService.ts';
 import { saveOfflineMediaBlob } from './offlineStorage.ts';
+import { getMomentMediaSlides } from '../utils/imageHelper.ts';
+import type { MomentItem, MediaStorageProvider } from '../types/index.ts';
 
 function fileOrBlobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -41,18 +50,18 @@ export interface FirebaseResumableOptions {
 }
 
 /**
- * Unggah media ke Firebase Storage bawaan ("salma-anak-kami") secara resumable (uploadBytesResumable).
- * Mendukung file video/foto berukuran besar tanpa batasan, dengan progres byte akurat & fitur batal.
+ * Unggah media ke Firebase Storage ("salma-anak-kami") menggunakan uploadBytesResumable.
+ * Khusus video disimpan di direktori `videos/` dan mengembalikan download URL resmi HTTPS.
  */
 export async function uploadToFirebaseStorageResumable(
   blob: Blob,
   safeFileName: string,
-  folderCategory: 'moments' | 'avatars' = 'moments',
+  folderDirectory = 'videos',
   onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void,
   options?: FirebaseResumableOptions
 ): Promise<string> {
-  const ownerFolder = auth.currentUser?.uid || 'salma_family';
-  const objectPath = `journals/${ownerFolder}/${folderCategory}/${Date.now()}_${safeFileName}`;
+  const cleanDir = folderDirectory.replace(/^\/+|\/+$/g, '') || 'videos';
+  const objectPath = `${cleanDir}/${Date.now()}_${safeFileName}`;
   const storageRef = ref(storage, objectPath);
 
   return new Promise<string>((resolve, reject) => {
@@ -117,6 +126,47 @@ export async function uploadToFirebaseStorageResumable(
 }
 
 /**
+ * Menghapus file media dari Firebase Storage
+ */
+export async function deleteFirebaseStorageMedia(mediaUrl: string): Promise<boolean> {
+  try {
+    if (!mediaUrl || !mediaUrl.includes('firebasestorage')) return false;
+    const storageRef = ref(storage, mediaUrl);
+    await deleteObject(storageRef);
+    return true;
+  } catch (err) {
+    console.warn('Gagal menghapus file dari Firebase Storage:', err);
+    return false;
+  }
+}
+
+/**
+ * Menghapus bersih seluruh file media suatu momen dari Firebase Storage & Cloudinary
+ */
+export async function deleteMomentMediaFiles(moment: MomentItem): Promise<void> {
+  const slides = getMomentMediaSlides(moment);
+  await Promise.allSettled(
+    slides.map(async (slide) => {
+      const url = slide.url;
+      if (!url) return;
+      if (url.includes('firebasestorage')) {
+        await deleteFirebaseStorageMedia(url);
+      } else {
+        try {
+          await fetch('/api/delete-media', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+          });
+        } catch {
+          // ignore
+        }
+      }
+    })
+  );
+}
+
+/**
  * Mengunggah foto profil ke Cloudinary dengan batas waktu ketat (misal <= 5 detik)
  * tanpa retry panjang yang membuat modal menggantung. Melempar error jika offline/lambat
  * sehingga pemanggil dapat menyimpan lokal (IndexedDB / LocalStorage) terlebih dahulu.
@@ -156,6 +206,12 @@ export async function uploadAvatarToCloudinaryWithTimeout(
   return res.secure_url;
 }
 
+export interface UploadMediaResult {
+  url: string;
+  mediaType: 'photo' | 'video';
+  storageProvider: 'cloudinary' | 'firebase';
+}
+
 export interface ChildMediaUploadOptions {
   signal?: AbortSignal;
   onTaskCreated?: (task: UploadTask) => void;
@@ -163,24 +219,35 @@ export interface ChildMediaUploadOptions {
 }
 
 /**
- * Mengunggah foto atau video tumbuh kembang Salma secara otomatis & seamless:
- * 1. Mencoba Cloudinary terlebih dahulu (format resmi https://api.cloudinary.com/v1_1/la3st6qh/auto/upload)
- * 2. Jika Cloudinary gagal atau ukuran file terlalu besar, otomatis beralih ke Firebase Storage (uploadBytesResumable)
- * 3. Menghasilkan HTTPS URL resmi yang langsung disimpan ke Firestore
+ * Mengunggah foto atau video tumbuh kembang Salma sesuai standar arsitektur:
+ * 1. Khusus Video (video/*): Langsung diunggah ke Firebase Storage ("salma-anak-kami")
+ *    di folder `videos/` menggunakan uploadBytesResumable untuk stabilitas & kapasitas besar.
+ * 2. Khusus Foto: Diunggah ke Cloudinary ("la3st6qh"). Jika Cloudinary terkendala,
+ *    otomatis beralih ke Firebase Storage di folder `photos/`.
+ * 3. Menghasilkan download URL resmi HTTPS yang siap disimpan ke Firestore bersama metadata provider.
  */
-export async function uploadChildMediaOnline(
+export async function uploadChildMediaWithProviderInfo(
   input: File | Blob | string,
   preferredName = 'momen_salma.jpg',
   folderCategory: 'moments' | 'avatars' = 'moments',
   onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void,
   options?: ChildMediaUploadOptions
-): Promise<string> {
-  // Jika sudah berupa URL HTTPS (Cloudinary / Firebase / CDN / aset lokal), tidak perlu diunggah ulang
+): Promise<UploadMediaResult> {
+  const safeName = safeFileName(preferredName);
+
+  // Jika sudah berupa URL HTTPS resmi (Cloudinary / Firebase / aset lokal)
   if (typeof input === 'string' && !input.startsWith('data:') && !input.startsWith('blob:')) {
-    return input;
+    const isVideo =
+      /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(input) || input.includes('/video/');
+    const isFirebase =
+      input.includes('firebasestorage') || input.includes('firebase');
+    return {
+      url: input,
+      mediaType: isVideo ? 'video' : 'photo',
+      storageProvider: isFirebase ? 'firebase' : 'cloudinary',
+    };
   }
 
-  const safeName = preferredName.replace(/[^a-zA-Z0-9._-]/g, '_');
   let blob: Blob;
   let dataUrl: string | null = null;
 
@@ -196,16 +263,55 @@ export async function uploadChildMediaOnline(
     blob = input;
   }
 
-  // Offline Fallback: Jika internet HP sedang mati, simpan Blob di IndexedDB agar tetap aman
+  const isVideo =
+    blob.type.startsWith('video/') ||
+    /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(preferredName) ||
+    (dataUrl ? dataUrl.startsWith('data:video') : false);
+
+  const normalizedMediaType: 'photo' | 'video' = isVideo ? 'video' : 'photo';
+
+  // Offline Fallback: Simpan Blob di IndexedDB agar momen tidak hilang saat internet mati
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     const offlineKey = `offline_${Date.now()}_${safeName}`;
     await saveOfflineMediaBlob(offlineKey, blob);
-    return dataUrl || (await fileOrBlobToDataUrl(blob));
+    const resolvedFallback = dataUrl || (await fileOrBlobToDataUrl(blob));
+    return {
+      url: resolvedFallback,
+      mediaType: normalizedMediaType,
+      storageProvider: isVideo ? 'firebase' : 'cloudinary',
+    };
   }
 
-  // 1. Prioritas Utama: Unggah ke Cloudinary resmi
+  // JALUR 1: KHUSUS VIDEO -> Langsung ke Firebase Storage (salma-anak-kami) di folder `videos/`
+  if (isVideo) {
+    try {
+      const downloadUrl = await uploadToFirebaseStorageResumable(
+        blob,
+        safeName.endsWith('.mp4') || safeName.endsWith('.mov') ? safeName : `${safeName}.mp4`,
+        'videos',
+        onProgress,
+        {
+          signal: options?.signal,
+          onTaskCreated: options?.onTaskCreated,
+        }
+      );
+      return {
+        url: downloadUrl,
+        mediaType: 'video',
+        storageProvider: 'firebase',
+      };
+    } catch (fbErr: any) {
+      if (options?.signal?.aborted) {
+        throw new Error('Pengunggahan video dibatalkan.');
+      }
+      console.warn('Firebase Storage upload video error:', fbErr);
+      throw fbErr;
+    }
+  }
+
+  // JALUR 2: KHUSUS FOTO -> Unggah ke Cloudinary (la3st6qh)
   try {
-    const isLargeFile = blob.size > 20 * 1024 * 1024; // > 20MB
+    const isLargeFile = blob.size > 20 * 1024 * 1024;
     const cloudinaryPromise = isLargeFile
       ? uploadToCloudinaryChunked(blob, safeName, onProgress, {
           signal: options?.signal,
@@ -218,7 +324,11 @@ export async function uploadChildMediaOnline(
 
     const cloudinaryRes = await cloudinaryPromise;
     if (cloudinaryRes.secure_url) {
-      return cloudinaryRes.secure_url;
+      return {
+        url: cloudinaryRes.secure_url,
+        mediaType: 'photo',
+        storageProvider: 'cloudinary',
+      };
     }
   } catch (cloudinaryErr: any) {
     if (options?.signal?.aborted) {
@@ -226,21 +336,21 @@ export async function uploadChildMediaOnline(
     }
     const errText = cloudinaryErr?.message || String(cloudinaryErr);
     console.warn(
-      'Cloudinary upload mengalami kendala, beralih otomatis ke Firebase Storage:',
+      'Cloudinary foto mengalami kendala, beralih otomatis ke Firebase Storage:',
       errText
     );
     options?.onFallbackTriggered?.(
       'firebase_storage',
-      'Mengalihkan pengunggahan ke Firebase Storage (cadangan kapasitas besar)...'
+      'Mengalihkan pengunggahan foto ke Firebase Storage...'
     );
   }
 
-  // 2. Cadangan Otomatis: Firebase Storage pada proyek `salma-anak-kami` (Kapasitas besar tanpa batas ukuran)
+  // JALUR CADANGAN FOTO: Firebase Storage (folder `photos/`)
   try {
     const fbStorageUrl = await uploadToFirebaseStorageResumable(
       blob,
-      safeFileName(safeName),
-      folderCategory,
+      safeName,
+      'photos',
       onProgress,
       {
         signal: options?.signal,
@@ -248,16 +358,20 @@ export async function uploadChildMediaOnline(
       }
     );
     if (fbStorageUrl) {
-      return fbStorageUrl;
+      return {
+        url: fbStorageUrl,
+        mediaType: 'photo',
+        storageProvider: 'firebase',
+      };
     }
   } catch (fbErr: any) {
     if (options?.signal?.aborted) {
       throw new Error('Pengunggahan dibatalkan.');
     }
-    console.warn('Firebase Storage upload error:', fbErr);
+    console.warn('Firebase Storage upload foto error:', fbErr);
   }
 
-  // 3. Cadangan Server Lokal (`/uploads/...`) atau IndexedDB
+  // JALUR CADANGAN LOKAL
   const resolvedDataUrl = dataUrl || (await fileOrBlobToDataUrl(blob));
   try {
     const res = await fetch('/api/upload-media', {
@@ -271,7 +385,11 @@ export async function uploadChildMediaOnline(
     if (res.ok) {
       const data = (await res.json()) as { url?: string };
       if (data.url) {
-        return data.url;
+        return {
+          url: data.url,
+          mediaType: normalizedMediaType,
+          storageProvider: 'cloudinary',
+        };
       }
     }
   } catch {
@@ -279,7 +397,31 @@ export async function uploadChildMediaOnline(
     await saveOfflineMediaBlob(offlineKey, blob);
   }
 
-  return resolvedDataUrl;
+  return {
+    url: resolvedDataUrl,
+    mediaType: normalizedMediaType,
+    storageProvider: isVideo ? 'firebase' : 'cloudinary',
+  };
+}
+
+/**
+ * Wrapper praktis yang mengembalikan langsung URL HTTPS
+ */
+export async function uploadChildMediaOnline(
+  input: File | Blob | string,
+  preferredName = 'momen_salma.jpg',
+  folderCategory: 'moments' | 'avatars' = 'moments',
+  onProgress?: (percent: number, loadedBytes?: number, totalBytes?: number) => void,
+  options?: ChildMediaUploadOptions
+): Promise<string> {
+  const result = await uploadChildMediaWithProviderInfo(
+    input,
+    preferredName,
+    folderCategory,
+    onProgress,
+    options
+  );
+  return result.url;
 }
 
 function safeFileName(raw: string): string {

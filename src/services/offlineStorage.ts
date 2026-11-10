@@ -31,6 +31,7 @@ export type OfflineMutationKind =
   | 'profile:update'
   | 'moment:create'
   | 'moment:update'
+  | 'moment:delete'
   | 'growth:create'
   | 'milestone:toggle'
   | 'quote:update';

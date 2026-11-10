@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Download,
   Edit2,
+  Trash2,
   ChevronLeft,
   ChevronRight,
   Sparkles,
@@ -31,6 +32,7 @@ interface MomentLightboxProps {
   childName: string;
   onClose: () => void;
   onEditMoment?: (moment: MomentItem) => void;
+  onDeleteMoment?: (moment: MomentItem) => void;
   onNotify?: (msg: string) => void;
   onPrev?: () => void;
   onNext?: () => void;
@@ -46,12 +48,14 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
   childName,
   onClose,
   onEditMoment,
+  onDeleteMoment,
   onNotify,
   onPrev,
   onNext,
 }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [slideIndex, setSlideIndex] = useState(0);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const slides = moment ? getMomentMediaSlides(moment) : [];
   const hasMultipleSlides = slides.length > 1;
@@ -439,9 +443,9 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
             </div>
           </div>
 
-          {/* Action Footer: Edit, Download & Tutup */}
+          {/* Action Footer: Edit, Download, Hapus & Tutup */}
           <div className="pt-3 border-t border-[#EDE8DF] flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => void handleDownloadCurrent()}
@@ -449,7 +453,11 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>
-                  {hasMultipleSlides
+                  {activeSlide.mediaType === 'video'
+                    ? hasMultipleSlides
+                      ? `Unduh Video (${safeSlideIdx + 1}/${slides.length})`
+                      : 'Unduh Video'
+                    : hasMultipleSlides
                     ? `Unduh Foto (${safeSlideIdx + 1}/${slides.length})`
                     : 'Unduh Foto'}
                 </span>
@@ -469,6 +477,18 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
                   <span>Edit Momen</span>
                 </button>
               )}
+
+              {onDeleteMoment && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  title="Hapus momen ini beserta file medianya"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Hapus</span>
+                </button>
+              )}
             </div>
 
             <button
@@ -481,6 +501,47 @@ export const MomentLightbox: React.FC<MomentLightboxProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal for Clean Moment & Media Deletion */}
+      {showDeleteConfirm && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-60 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+        >
+          <div className="bg-[#FFFDF9] rounded-2xl border border-rose-200 p-5 max-w-sm w-full shadow-2xl space-y-3">
+            <div className="flex items-center gap-2.5 text-rose-700">
+              <div className="w-9 h-9 rounded-xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-900">Hapus Momen Ini?</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Momen <span className="font-bold text-slate-800">"{moment.title}"</span> dan file
+              medianya di cloud storage akan dihapus secara bersih agar tidak meninggalkan sampah.
+            </p>
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl border border-slate-200 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  onClose();
+                  onDeleteMoment?.(moment);
+                }}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                Ya, Hapus Bersih
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

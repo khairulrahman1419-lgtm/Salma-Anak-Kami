@@ -5,7 +5,7 @@
 export async function downloadMediaFile(
   mediaUrl: string,
   titleOrName: string,
-  mediaType: 'image' | 'video' = 'image'
+  mediaType: 'image' | 'video' | 'photo' = 'image'
 ): Promise<boolean> {
   if (!mediaUrl) return false;
 
