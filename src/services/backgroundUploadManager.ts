@@ -12,6 +12,10 @@
 
 import type { UploadTask } from 'firebase/storage';
 import {
+  isVideoCompressionNeeded,
+  compressVideoInBrowser,
+} from './videoCompressor.ts';
+import {
   uploadChildMediaOnline,
   uploadChildMediaWithProviderInfo,
 } from './mediaFirebaseStorage.ts';
@@ -26,8 +30,8 @@ import type {
 } from '../types/index.ts';
 
 export type BackgroundTaskStatus =
+  | 'compressing'
   | 'uploading'
-  | 'fallback_storage'
   | 'saving_firestore'
   | 'completed'
   | 'error'
@@ -75,7 +79,7 @@ export interface BackgroundUploadTask {
   overallTotalBytes: number;
   overallPercent: number; // 0 - 100
   statusMessage: string;
-  provider: 'cloudinary' | 'firebase_storage' | 'google_drive';
+  provider: 'cloudinary' | 'google_drive';
   errorMessage?: string;
   payload: BackgroundUploadPayload;
   resultMoment?: MomentItem;
@@ -152,22 +156,36 @@ class BackgroundUploadManager {
       return acc + (slide.file?.size || slide.fileSize || 500 * 1024);
     }, 0);
 
-    const isVideo = payload.slides.some((s) => s.mediaType === 'video');
+    const isVideo = payload.slides.some(
+      (s) =>
+        s.mediaType === 'video' ||
+        (s.file && s.file.type.startsWith('video/')) ||
+        (s.fileName && /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(s.fileName))
+    );
     const mediaLabel = isVideo ? 'Video' : 'Foto';
+
+    const needsCompression = payload.slides.some(
+      (s) => s.file && isVideoCompressionNeeded(s.file)
+    );
+
+    const initialStatus: BackgroundTaskStatus = needsCompression ? 'compressing' : 'uploading';
+    const initialMessage = needsCompression
+      ? 'Mengecilkan Ukuran Video Otomatis...'
+      : `Mengunggah ${mediaLabel} ke Cloudinary... 0% (0 B / ${formatByteSize(totalBytesEstimate)})`;
 
     const task: BackgroundUploadTask = {
       id: taskId,
       title: payload.momentDraft.title || `Momen ${payload.childProfile.nickname}`,
-      status: 'uploading',
+      status: initialStatus,
       currentSlideIndex: 0,
       totalSlides: payload.slides.length,
       currentSlideProgress: 0,
       currentLoadedBytes: 0,
-      currentTotalBytes: payload.slides[0]?.file?.size || 0,
+      currentTotalBytes: payload.slides[0]?.file?.size || payload.slides[0]?.fileSize || 0,
       overallLoadedBytes: 0,
       overallTotalBytes: totalBytesEstimate,
       overallPercent: 0,
-      statusMessage: `Menyiapkan pengunggahan ${mediaLabel.toLowerCase()}...`,
+      statusMessage: initialMessage,
       provider: 'cloudinary',
       payload,
       createdAt: Date.now(),
@@ -201,28 +219,70 @@ class BackgroundUploadManager {
         }
 
         const slide = slides[i];
-        const isVideo = slide.mediaType === 'video';
-        const slideSize = slide.file?.size || slide.fileSize || 0;
+        const isVideo =
+          slide.mediaType === 'video' ||
+          (slide.file && slide.file.type.startsWith('video/')) ||
+          (slide.fileName && /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(slide.fileName));
+        const mediaLabel = isVideo ? 'Video' : 'Foto';
         const slidePrefix = slides.length > 1 ? ` (${i + 1}/${slides.length})` : '';
 
+        // Provider selalu Cloudinary (100% Cloudinary untuk foto & video)
+        task.provider = 'cloudinary';
         task.currentSlideIndex = i;
-        task.currentTotalBytes = slideSize;
+
+        // 2. Kompresi Video Otomatis di Browser jika ukuran video > 90 MB
+        let fileToUpload: File | Blob | string = slide.file ? slide.file : slide.previewUrl;
+        if (slide.file && isVideoCompressionNeeded(slide.file)) {
+          task.status = 'compressing';
+          task.statusMessage = 'Mengecilkan Ukuran Video Otomatis...';
+          this.notify();
+
+          try {
+            const compressed = await compressVideoInBrowser(slide.file, {
+              signal,
+              onProgress: (pct) => {
+                if (signal.aborted) return;
+                task.currentSlideProgress = pct;
+                task.statusMessage = 'Mengecilkan Ukuran Video Otomatis...';
+                this.notify();
+              },
+            });
+
+            slide.file = compressed;
+            slide.fileSize = compressed.size;
+            fileToUpload = compressed;
+          } catch (compErr: any) {
+            if (signal.aborted) {
+              throw new Error('Kompresi video dibatalkan.');
+            }
+            throw new Error(`Gagal mengecilkan ukuran video: ${compErr?.message || 'Error kompresi'}`);
+          }
+        }
+
+        const currentFileSize =
+          fileToUpload instanceof Blob
+            ? fileToUpload.size
+            : slide.fileSize || 0;
+
+        task.status = 'uploading';
+        task.currentTotalBytes = currentFileSize;
         task.currentLoadedBytes = 0;
         task.currentSlideProgress = 0;
-        task.statusMessage = `Mengunggah ${isVideo ? 'Video' : 'Foto'}${slidePrefix}: 0% (0 B / ${formatByteSize(
-          slideSize
-        )})`;
+        // Status awal: "Mengunggah Video ke Cloudinary... 0% (0 B / Total MB)"
+        task.statusMessage = `Mengunggah ${mediaLabel} ke Cloudinary... 0% (0 B / ${formatByteSize(
+          currentFileSize
+        )})${slidePrefix}`;
         this.notify();
 
-        // Unggah media: Video langsung ke Firebase Storage (videos/), Foto ke Cloudinary
+        // Unggah 100% ke Cloudinary resmi menggunakan XMLHttpRequest onprogress
         const uploadResult = await uploadChildMediaWithProviderInfo(
-          slide.file ? slide.file : slide.previewUrl,
+          fileToUpload,
           slide.fileName ||
             `momen_${Date.now()}_${i + 1}.${isVideo ? 'mp4' : 'jpg'}`,
           'moments',
           (pct, loaded, total) => {
             if (signal.aborted) return;
-            const currentTotal = total || slideSize;
+            const currentTotal = total || currentFileSize;
             const currentLoaded = loaded || Math.round((pct / 100) * currentTotal);
             slideBytesLoaded[i] = currentLoaded;
 
@@ -236,24 +296,14 @@ class BackgroundUploadManager {
             task.overallLoadedBytes = sumLoaded;
             task.overallPercent = overallPct;
 
-            // Format sesuai permintaan: "Mengunggah Video: 45% (35 MB / 80 MB)"
-            task.statusMessage = `Mengunggah ${
-              isVideo ? 'Video' : 'Foto'
-            }${slidePrefix}: ${pct}% (${formatByteSize(currentLoaded)} / ${formatByteSize(currentTotal)})`;
+            // Format persis sesuai instruksi:
+            // "Mengunggah Video ke Cloudinary... X% (MB terunggah / Total MB)"
+            task.statusMessage = `Mengunggah ${mediaLabel} ke Cloudinary... ${pct}% (${formatByteSize(
+              currentLoaded
+            )} / ${formatByteSize(currentTotal)})${slidePrefix}`;
             this.notify();
           },
-          {
-            signal,
-            onTaskCreated: (fbTask) => {
-              this.firebaseUploadTasks.set(taskId, fbTask);
-            },
-            onFallbackTriggered: (provider, reason) => {
-              task.provider = provider;
-              task.status = 'fallback_storage';
-              task.statusMessage = reason;
-              this.notify();
-            },
-          }
+          { signal }
         );
 
         uploadedSlides.push({
@@ -398,12 +448,24 @@ class BackgroundUploadManager {
     } catch (err: any) {
       if (signal.aborted) {
         task.status = 'cancelled';
-        task.statusMessage = 'Pengunggahan dibatalkan.';
+        task.statusMessage = 'Pengunggahan dibatalkan oleh pengguna.';
       } else {
-        const msg = err?.message || 'Terjadi gangguan jaringan saat mengunggah.';
+        const isVideo = payload.slides.some(
+          (s) =>
+            s.mediaType === 'video' ||
+            (s.file && s.file.type.startsWith('video/')) ||
+            (s.fileName && /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(s.fileName))
+        );
+        const rawMsg = err?.message || 'Terjadi gangguan jaringan saat mengunggah.';
+        const formattedMsg = rawMsg.startsWith('Gagal')
+          ? rawMsg
+          : isVideo
+          ? `Gagal mengunggah video: ${rawMsg}`
+          : `Gagal mengunggah foto: ${rawMsg}`;
+
         task.status = 'error';
-        task.errorMessage = msg;
-        task.statusMessage = `Gagal mengunggah: ${msg}`;
+        task.errorMessage = formattedMsg;
+        task.statusMessage = formattedMsg;
       }
       this.notify();
     } finally {
@@ -413,12 +475,17 @@ class BackgroundUploadManager {
   }
 
   /**
-   * Batalkan pengunggahan yang sedang berjalan
+   * Batalkan pengunggahan yang sedang berjalan.
+   * Langsung membatalkan uploadTask dan menutup kartu progres seketika.
    */
   public cancelTask(taskId: string) {
     const controller = this.abortControllers.get(taskId);
     if (controller) {
-      controller.abort();
+      try {
+        controller.abort();
+      } catch (e) {
+        console.warn('Abort error:', e);
+      }
       this.abortControllers.delete(taskId);
     }
 
@@ -432,16 +499,8 @@ class BackgroundUploadManager {
       this.firebaseUploadTasks.delete(taskId);
     }
 
-    const task = this.tasks.get(taskId);
-    if (task) {
-      task.status = 'cancelled';
-      task.statusMessage = 'Pengunggahan dibatalkan oleh pengguna.';
-      this.notify();
-
-      setTimeout(() => {
-        this.dismissTask(taskId);
-      }, 4000);
-    }
+    // Segera hapus task dan tutup kartu progres di layar secara instan
+    this.dismissTask(taskId);
   }
 
   /**

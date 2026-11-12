@@ -47,10 +47,16 @@ export const FloatingUploadProgress: React.FC = () => {
       className="fixed bottom-24 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2.5 max-w-sm w-[calc(100vw-1.5rem)] sm:w-[380px] pointer-events-none select-none"
     >
       {tasks.map((task) => {
-        const isVideo = task.payload.slides.some((s) => s.mediaType === 'video');
+        const isVideo = task.payload.slides.some(
+          (s) =>
+            s.mediaType === 'video' ||
+            (s.file && s.file.type.startsWith('video/')) ||
+            (s.fileName && /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(s.fileName))
+        );
+        const isCompressing = task.status === 'compressing';
         const isUploading =
           task.status === 'uploading' ||
-          task.status === 'fallback_storage' ||
+          task.status === 'compressing' ||
           task.status === 'saving_firestore';
         const isCompleted = task.status === 'completed';
         const isError = task.status === 'error';
@@ -63,7 +69,7 @@ export const FloatingUploadProgress: React.FC = () => {
               isCompleted
                 ? 'border-emerald-300 bg-emerald-50/60 shadow-emerald-500/10'
                 : isError
-                ? 'border-rose-300 bg-rose-50/60 shadow-rose-500/10'
+                ? 'border-rose-300 bg-rose-50/80 shadow-rose-500/15 ring-1 ring-rose-300'
                 : isCancelled
                 ? 'border-slate-300 bg-slate-50'
                 : 'border-[#EAE4D7] shadow-slate-900/10'
@@ -80,13 +86,17 @@ export const FloatingUploadProgress: React.FC = () => {
                       ? 'bg-rose-100 text-rose-700'
                       : isCancelled
                       ? 'bg-slate-200 text-slate-700'
-                      : 'bg-teal-100 text-teal-800'
+                      : isCompressing
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-sky-100 text-sky-800'
                   }`}
                 >
                   {isCompleted ? (
                     <CheckCircle2 className="w-4 h-4" />
                   ) : isError ? (
                     <AlertTriangle className="w-4 h-4" />
+                  ) : isCompressing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
                   ) : isUploading ? (
                     isVideo ? (
                       <Video className="w-4 h-4 animate-pulse" />
@@ -100,32 +110,34 @@ export const FloatingUploadProgress: React.FC = () => {
 
                 <div className="min-w-0">
                   <h4 className="text-xs font-bold text-slate-900 truncate">
-                    {task.title || (isVideo ? 'Momen Video Baru' : 'Momen Foto Baru')}
+                    {task.title || (isVideo ? 'Momen Video Salma' : 'Momen Foto Salma')}
                   </h4>
                   <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-slate-500">
-                    {isUploading && (
+                    {/* Badge Cloudinary Resmi */}
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md bg-sky-100 text-sky-800 font-bold border border-sky-200">
+                      <Cloud className="w-2.5 h-2.5" />
+                      Cloudinary
+                    </span>
+
+                    {isCompressing && (
+                      <span className="inline-flex items-center gap-1 font-semibold text-amber-700">
+                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                        Kompresi Otomatis
+                      </span>
+                    )}
+
+                    {task.status === 'uploading' && (
                       <span className="inline-flex items-center gap-1 font-semibold text-teal-700">
                         <Loader2 className="w-2.5 h-2.5 animate-spin" />
                         Unggah Latar Belakang
                       </span>
                     )}
-                    {task.provider === 'firebase_storage' && (
-                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800 font-bold border border-amber-200">
-                        <HardDrive className="w-2.5 h-2.5" />
-                        Firebase Storage
-                      </span>
-                    )}
-                    {task.provider === 'cloudinary' && isUploading && (
-                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md bg-sky-100 text-sky-800 font-bold border border-sky-200">
-                        <Cloud className="w-2.5 h-2.5" />
-                        Cloudinary
-                      </span>
-                    )}
+
                     {isCompleted && (
                       <span className="text-emerald-700 font-bold">✓ Tersinkronisasi</span>
                     )}
                     {isError && (
-                      <span className="text-rose-700 font-bold">Gagal Mengunggah</span>
+                      <span className="text-rose-700 font-bold">Gagal</span>
                     )}
                     {isCancelled && (
                       <span className="text-slate-600 font-medium">Dibatalkan</span>
@@ -147,30 +159,48 @@ export const FloatingUploadProgress: React.FC = () => {
               )}
             </div>
 
-            {/* Real-time Status Message (e.g., Mengunggah Video: 45.2 MB / 150 MB (30%)) */}
-            <p className="text-[11px] font-medium text-slate-700 truncate mb-2">
-              {task.statusMessage}
-            </p>
+            {/* Error Banner / Toast jika terjadi error */}
+            {isError ? (
+              <div className="p-2 rounded-xl bg-rose-100 border border-rose-200 text-rose-800 text-[11px] font-semibold flex items-start gap-1.5 mb-2 leading-relaxed">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-rose-600" />
+                <span className="break-words">
+                  {task.errorMessage || task.statusMessage || 'Gagal mengunggah media.'}
+                </span>
+              </div>
+            ) : (
+              /* Real-time Status Message (e.g. Mengecilkan Ukuran Video Otomatis... atau Mengunggah Video ke Cloudinary... 45%) */
+              <p className="text-[11px] font-medium text-slate-700 truncate mb-2">
+                {task.statusMessage}
+              </p>
+            )}
 
-            {/* Progress Bar (when uploading) */}
+            {/* Progress Bar (when uploading or compressing) */}
             {isUploading && (
               <div className="space-y-1.5">
                 <div className="w-full h-2 rounded-full bg-slate-200/80 overflow-hidden">
                   <div
-                    className="h-full bg-gradient-to-r from-teal-500 to-emerald-500 rounded-full transition-all duration-300"
-                    style={{ width: `${Math.max(4, task.overallPercent)}%` }}
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      isCompressing
+                        ? 'bg-gradient-to-r from-amber-500 to-orange-500'
+                        : 'bg-gradient-to-r from-teal-500 to-sky-500'
+                    }`}
+                    style={{ width: `${Math.max(4, task.overallPercent || task.currentSlideProgress)}%` }}
                   />
                 </div>
 
                 <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono">
                   <span>
-                    {task.totalSlides > 1
+                    {isCompressing
+                      ? 'Mengompresi ke 720p (<90 MB)'
+                      : task.totalSlides > 1
                       ? `Slide ${task.currentSlideIndex + 1} dari ${task.totalSlides}`
                       : isVideo
                       ? 'Video Momen'
                       : 'Foto Momen'}
                   </span>
-                  <span className="font-bold text-slate-800">{task.overallPercent}%</span>
+                  <span className="font-bold text-slate-800">
+                    {isCompressing ? `${task.currentSlideProgress}%` : `${task.overallPercent}%`}
+                  </span>
                 </div>
               </div>
             )}

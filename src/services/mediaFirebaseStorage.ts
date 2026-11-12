@@ -76,6 +76,11 @@ export async function uploadToFirebaseStorageResumable(
 
     options?.onTaskCreated?.(uploadTask);
 
+    // Kirim notifikasi progres awal segera agar UI menampilkan total ukuran file sejak milidetik pertama
+    if (onProgress) {
+      onProgress(0, 0, blob.size);
+    }
+
     const onAbort = () => {
       try {
         uploadTask.cancel();
@@ -98,12 +103,16 @@ export async function uploadToFirebaseStorageResumable(
     uploadTask.on(
       'state_changed',
       (snapshot) => {
-        if (snapshot.totalBytes > 0 && onProgress) {
-          const pct = Math.min(
-            99,
-            Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
-          );
-          onProgress(pct, snapshot.bytesTransferred, snapshot.totalBytes);
+        if (options?.signal?.aborted) return;
+        const total = snapshot.totalBytes > 0 ? snapshot.totalBytes : blob.size;
+        const transferred = snapshot.bytesTransferred || 0;
+        const pct =
+          total > 0
+            ? Math.min(99, Math.round((transferred / total) * 100))
+            : 0;
+
+        if (onProgress) {
+          onProgress(pct, transferred, total);
         }
       },
       (error) => {
@@ -264,7 +273,8 @@ export async function uploadChildMediaWithProviderInfo(
   }
 
   const isVideo =
-    blob.type.startsWith('video/') ||
+    (input instanceof File && input.type.startsWith('video/')) ||
+    (typeof blob !== 'undefined' && blob.type.startsWith('video/')) ||
     /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(preferredName) ||
     (dataUrl ? dataUrl.startsWith('data:video') : false);
 
@@ -278,38 +288,12 @@ export async function uploadChildMediaWithProviderInfo(
     return {
       url: resolvedFallback,
       mediaType: normalizedMediaType,
-      storageProvider: isVideo ? 'firebase' : 'cloudinary',
+      storageProvider: 'cloudinary',
     };
   }
 
-  // JALUR 1: KHUSUS VIDEO -> Langsung ke Firebase Storage (salma-anak-kami) di folder `videos/`
-  if (isVideo) {
-    try {
-      const downloadUrl = await uploadToFirebaseStorageResumable(
-        blob,
-        safeName.endsWith('.mp4') || safeName.endsWith('.mov') ? safeName : `${safeName}.mp4`,
-        'videos',
-        onProgress,
-        {
-          signal: options?.signal,
-          onTaskCreated: options?.onTaskCreated,
-        }
-      );
-      return {
-        url: downloadUrl,
-        mediaType: 'video',
-        storageProvider: 'firebase',
-      };
-    } catch (fbErr: any) {
-      if (options?.signal?.aborted) {
-        throw new Error('Pengunggahan video dibatalkan.');
-      }
-      console.warn('Firebase Storage upload video error:', fbErr);
-      throw fbErr;
-    }
-  }
-
-  // JALUR 2: KHUSUS FOTO -> Unggah ke Cloudinary (la3st6qh)
+  // JALUR 100% CLOUDINARY RESMI (Endpoint: https://api.cloudinary.com/v1_1/la3st6qh/auto/upload)
+  // Semua media (Foto dan Video) diunggah langsung ke Cloudinary
   try {
     const isLargeFile = blob.size > 20 * 1024 * 1024;
     const cloudinaryPromise = isLargeFile
@@ -319,56 +303,26 @@ export async function uploadChildMediaWithProviderInfo(
         })
       : uploadToCloudinary(blob, safeName, onProgress, {
           signal: options?.signal,
-          timeoutMs: 300_000,
+          timeoutMs: 450_000,
         });
 
     const cloudinaryRes = await cloudinaryPromise;
     if (cloudinaryRes.secure_url) {
       return {
         url: cloudinaryRes.secure_url,
-        mediaType: 'photo',
+        mediaType: normalizedMediaType,
         storageProvider: 'cloudinary',
       };
     }
+
+    throw new Error('Respons Cloudinary tidak memiliki secure_url.');
   } catch (cloudinaryErr: any) {
     if (options?.signal?.aborted) {
-      throw new Error('Pengunggahan dibatalkan.');
+      throw new Error('Pengunggahan ke Cloudinary dibatalkan oleh pengguna.');
     }
     const errText = cloudinaryErr?.message || String(cloudinaryErr);
-    console.warn(
-      'Cloudinary foto mengalami kendala, beralih otomatis ke Firebase Storage:',
-      errText
-    );
-    options?.onFallbackTriggered?.(
-      'firebase_storage',
-      'Mengalihkan pengunggahan foto ke Firebase Storage...'
-    );
-  }
-
-  // JALUR CADANGAN FOTO: Firebase Storage (folder `photos/`)
-  try {
-    const fbStorageUrl = await uploadToFirebaseStorageResumable(
-      blob,
-      safeName,
-      'photos',
-      onProgress,
-      {
-        signal: options?.signal,
-        onTaskCreated: options?.onTaskCreated,
-      }
-    );
-    if (fbStorageUrl) {
-      return {
-        url: fbStorageUrl,
-        mediaType: 'photo',
-        storageProvider: 'firebase',
-      };
-    }
-  } catch (fbErr: any) {
-    if (options?.signal?.aborted) {
-      throw new Error('Pengunggahan dibatalkan.');
-    }
-    console.warn('Firebase Storage upload foto error:', fbErr);
+    console.error('Cloudinary upload failure:', errText);
+    throw new Error(errText);
   }
 
   // JALUR CADANGAN LOKAL
@@ -384,9 +338,10 @@ export async function uploadChildMediaWithProviderInfo(
     });
     if (res.ok) {
       const data = (await res.json()) as { url?: string };
-      if (data.url) {
+      const returnedUrl = data?.url ? String(data.url) : '';
+      if (returnedUrl.length > 0) {
         return {
-          url: data.url,
+          url: returnedUrl,
           mediaType: normalizedMediaType,
           storageProvider: 'cloudinary',
         };
@@ -400,7 +355,7 @@ export async function uploadChildMediaWithProviderInfo(
   return {
     url: resolvedDataUrl,
     mediaType: normalizedMediaType,
-    storageProvider: isVideo ? 'firebase' : 'cloudinary',
+    storageProvider: 'cloudinary',
   };
 }
 

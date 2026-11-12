@@ -69,6 +69,7 @@ export function uploadToCloudinary(
     const formData = new FormData();
     formData.append('file', fileOrBlob, fileName);
     formData.append('upload_preset', uploadPreset);
+    formData.append('resource_type', 'auto');
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', uploadUrl, true);
@@ -201,6 +202,7 @@ export async function uploadToCloudinaryChunked(
     const formData = new FormData();
     formData.append('file', chunkBlob, fileName);
     formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    formData.append('resource_type', 'auto');
 
     const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
     const xhr = new XMLHttpRequest();

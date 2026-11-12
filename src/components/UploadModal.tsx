@@ -262,12 +262,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const file = acceptedFiles[i];
       const isVid = file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi|m4v)/i.test(file.name);
 
-      // Proteksi & Validasi ukuran video maksimal 150 MB
-      if (isVid && file.size > 150 * 1024 * 1024) {
-        setErrorMessage(
-          'Ukuran video terlalu besar (Maksimal 150 MB). Mohon persingkat durasi atau kompres video Anda.'
+      // Info kompresi otomatis untuk video berukuran > 90 MB
+      if (isVid && file.size > 90 * 1024 * 1024) {
+        setProgressStatus(
+          'Video berukuran > 90 MB akan otomatis dikecilkan ke resolusi 720p sebelum diunggah ke Cloudinary.'
         );
-        continue;
       }
 
       if (isVid) {
